@@ -1,4 +1,4 @@
-// Content Grader API v3.0 — Expanded 32-signal analysis engine
+// Content Grader API v3.0 â Expanded 32-signal analysis engine
 // Orchestrates: Firecrawl + DataForSEO + OpenAI + PageSpeed Insights + Google NLP
 // Signal architecture mapped to Google Content Warehouse API (seo-datawarehouse.com)
 
@@ -39,6 +39,82 @@ async function scrapeUrl(url) {
   const data = await resp.json();
   if (!data.success) throw new Error(`Firecrawl failed: ${JSON.stringify(data)}`);
   return data.data;
+}
+
+// ============================================================================
+// SerpApi: Real Google rank lookup (actual SERP position)
+// ============================================================================
+async function getRealGoogleRank(keyword, targetUrl) {
+  const apiKey = process.env.SERPAPI_KEY;
+  if (!apiKey) {
+    console.warn("[SerpApi] SERPAPI_KEY not set â skipping real rank lookup");
+    return null;
+  }
+
+  try {
+    const targetDomain = extractDomain(targetUrl);
+    const params = new URLSearchParams({
+      engine: "google",
+      q: keyword,
+      api_key: apiKey,
+      num: "100",
+      gl: "ca",
+      hl: "en",
+    });
+
+    const resp = await fetch(`https://serpapi.com/search.json?${params}`);
+    if (!resp.ok) {
+      console.warn(`[SerpApi] HTTP ${resp.status} â skipping`);
+      return null;
+    }
+
+    const data = await resp.json();
+    const organicResults = data.organic_results || [];
+
+    // Find the target URL in results (match by domain or exact URL)
+    let realRank = null;
+    let matchedUrl = null;
+    let matchType = null;
+
+    for (let i = 0; i < organicResults.length; i++) {
+      const result = organicResults[i];
+      const resultDomain = extractDomain(result.link || "");
+
+      // Exact URL match (strongest)
+      if (result.link && (result.link === targetUrl || result.link === targetUrl.replace(/\/$/, "") || result.link === targetUrl + "/")) {
+        realRank = result.position || i + 1;
+        matchedUrl = result.link;
+        matchType = "exact_url";
+        break;
+      }
+
+      // Domain match (fallback)
+      if (resultDomain === targetDomain && !realRank) {
+        realRank = result.position || i + 1;
+        matchedUrl = result.link;
+        matchType = "domain";
+      }
+    }
+
+    // Check if page is beyond the first 100 results
+    const totalResults = data.search_information?.total_results || null;
+
+    console.log(`[SerpApi] Real rank for "${keyword}": ${realRank || "not in top 100"} (match: ${matchType || "none"})`);
+
+    return {
+      realRank,
+      matchedUrl,
+      matchType,
+      totalResults,
+      resultsChecked: organicResults.length,
+      serpApiCreditsUsed: 1,
+      searchEngine: "google",
+      location: "Canada",
+    };
+  } catch (err) {
+    console.warn("[SerpApi] Error:", err.message);
+    return null;
+  }
 }
 
 // ============================================================================
@@ -255,676 +331,304 @@ async function analyzeEntitiesWithNLP(text) {
     entities.sort((a, b) => b.salience - a.salience);
 
     // Compute entity metrics
-    const totalSalience = entities.reduce((s, e) => s + e.salience, 0);
-    const knowledgeGraphEntities = entities.filter((e) => e.mid);
-    const entityTypes = new Set(entities.map((e) => e.type));
-
-    return {
-      entities: entities.slice(0, 20),
-      totalEntities: entities.length,
-      knowledgeGraphCount: knowledgeGraphEntities.length,
-      entityTypeCount: entityTypes.size,
-      entityTypes: [...entityTypes],
-      topEntity: entities[0] || null,
-      avgSalience: entities.length > 0 ? totalSalience / entities.length : 0,
-      // Entity coverage: how many entities link to Knowledge Graph
-      kgCoverage: entities.length > 0 ? knowledgeGraphEntities.length / entities.length : 0,
-    };
-  } catch (err) {
-    console.warn(`[NLP] Failed: ${err.message}`);
-    return null;
-  }
-}
-
-// ============================================================================
-// Google Cloud NLP: Sentiment Analysis
-// ============================================================================
-async function analyzeSentimentWithNLP(text) {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return null;
-
-  try {
-    const truncated = text.substring(0, 10000);
-    const resp = await fetch(
-      `https://language.googleapis.com/v1/documents:analyzeSentiment?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          document: { type: "PLAIN_TEXT", content: truncated },
-          encodingType: "UTF8",
-        }),
-        signal: AbortSignal.timeout(10000),
-      }
-    );
-
-    if (!resp.ok) return null;
-    const data = await resp.json();
-
-    return {
-      documentScore: data.documentSentiment?.score || 0,
-      documentMagnitude: data.documentSentiment?.magnitude || 0,
-      sentenceCount: data.sentences?.length || 0,
-    };
-  } catch (err) {
-    console.warn(`[NLP Sentiment] Failed: ${err.message}`);
-    return null;
-  }
-}
-
-// ============================================================================
-// OpenAI: Enhanced content analysis (expanded for 32 signals)
-// Maps to: QualityNSR, NavBoost, SpamBrain, SMITH, Rankembed, SearchPolicyRank
-// ============================================================================
-async function analyzeContentWithAI(content, keyword, serpCompetitors, targetDomain, nlpEntities, pageSpeedData) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-  const truncatedContent = content.substring(0, 14000);
-  const competitorList = serpCompetitors
-    .slice(0, 7)
-    .map((c) => `${c.rank}. ${c.domain} — "${c.title}"`)
-    .join("\n");
-
-  // Include NLP entity data if available
-  const entityContext = nlpEntities
-    ? `\nGOOGLE NLP ENTITIES DETECTED:\n${nlpEntities.entities.slice(0, 10).map(e => `- ${e.name} (${e.type}, salience: ${e.salience.toFixed(3)}, KG: ${e.hasWikipedia})`).join("\n")}\nTotal entities: ${nlpEntities.totalEntities}, KG-linked: ${nlpEntities.knowledgeGraphCount}`
-    : "";
-
-  // Include PageSpeed data if available
-  const speedContext = pageSpeedData
-    ? `\nPAGESPEED DATA:\n- Performance: ${pageSpeedData.performanceScore ? (pageSpeedData.performanceScore * 100).toFixed(0) : "N/A"}/100\n- LCP: ${pageSpeedData.lcp || "N/A"}ms (${pageSpeedData.lcpCategory})\n- CLS: ${pageSpeedData.cls || "N/A"} (${pageSpeedData.clsCategory})\n- INP: ${pageSpeedData.inp || "N/A"}ms (${pageSpeedData.inpCategory})\n- HTTPS: ${pageSpeedData.isHttps}\n- DOM Size: ${pageSpeedData.domSize || "N/A"} elements`
-    : "";
-
-  const prompt = `You are an expert SEO content analyst using the Google Content Warehouse API signal framework. Analyze the following content for the target keyword "${keyword}".
-
-CONTENT (truncated):
-${truncatedContent}
-
-TOP SERP COMPETITORS:
-${competitorList}
-
-TARGET DOMAIN: ${targetDomain}
-${entityContext}
-${speedContext}
-
-Analyze and return a JSON object with ALL of these fields. Use realistic scores between 0.0 and 1.0:
-
-{
-  "entitySalience": {
-    "score": <0-1, how prominently the primary entity/keyword appears and is semantically connected>,
-    "topCompetitorValue": "<string>",
-    "yourValue": "<string>",
-    "missingEntities": ["<entities that top competitors likely cover but this content doesn't>"],
-    "entityDepth": <0-1, how deeply entities are explored vs surface-level mentions>
-  },
-  "aiDetection": {
-    "score": <0-1, where 1.0 = clearly human-written, 0.0 = clearly AI-generated>,
-    "riskLevel": "<Low risk|Medium risk|High risk>",
-    "yourValue": "<the risk level>",
-    "indicators": ["<specific indicators of AI or human writing>"]
-  },
-  "contentEffort": {
-    "score": <0-1, overall content quality/depth/effort/originality>,
-    "topCompetitorValue": "<string>",
-    "yourValue": "<string>"
-  },
-  "readabilityGrade": {
-    "score": <0-1, where 1.0 = perfect readability for target audience>,
-    "gradeLevel": "<e.g. Grade 8>",
-    "avgSentenceLength": <number>
-  },
-  "headingDepth": {
-    "score": <0-1, quality and logical structure of heading hierarchy>,
-    "maxDepth": <number>,
-    "h1Count": <number>,
-    "totalHeadings": <number>
-  },
-  "citationCount": {
-    "score": <0-1>,
-    "count": <number of citations/references found>,
-    "topCompetitorValue": "<string>",
-    "yourValue": "<string>"
-  },
-  "expertQuotes": {
-    "score": <0-1>,
-    "count": <number of expert quotes, data points, or original research found>
-  },
-  "snippetMatch": {
-    "score": <0-1, how well content matches featured snippet and PAA patterns>,
-    "hasDefinition": <boolean, has a clear definition paragraph>,
-    "hasList": <boolean, has structured list/steps>,
-    "hasTable": <boolean, has comparison table>
-  },
-  "intentClassification": {
-    "classifiedIntent": "<Informational|Commercial Investigation|Navigational|Transactional>",
-    "classifiedStage": "<Awareness|Consideration|Decision|Action>",
-    "reasonScore": <0-1>,
-    "authorityScore": <0-1>,
-    "intentScore": <0-1>,
-    "directionScore": <0-1>,
-    "composite": <0-1>,
-    "recommendations": ["<string recommendations>"]
-  },
-  "navboost": {
-    "ctrAttractiveness": <0-1, how clickable title/meta would be in SERP>,
-    "satisfactionScore": <0-1, estimated user satisfaction with content depth>,
-    "pogoStickRisk": <0-1, risk of users bouncing back to SERP>,
-    "lastLongestProbability": <0-1, probability this is the last click>,
-    "dwellTimeEstimate": "<short|medium|long, estimated time user spends>",
-    "composite": <0-1>
-  },
-  "smithSections": {
-    "sections": [
-      { "title": "<heading>", "composite": <0-1>, "wordCount": <number>, "issues": ["<issues>"] }
-    ],
-    "pageComposite": <0-1>,
-    "smithPenalty": <0-1>,
-    "sectionVariance": <0-1>,
-    "weakestSection": { "title": "<title>", "score": <0-1>, "issues": ["<issues>"] },
-    "strongestSection": { "title": "<title>", "score": <0-1> }
-  },
-  "informationGain": {
-    "score": <0-1, how much unique/original information this content adds beyond what competitors offer>,
-    "uniqueAngles": ["<unique perspectives or data points not found in typical SERP results>"],
-    "redundancyLevel": "<low|medium|high, how much content repeats what's already in top results>"
-  },
-  "topicalAuthority": {
-    "score": <0-1, how well the domain appears to cover this topic comprehensively>,
-    "topicRelevance": <0-1, how relevant is this specific page to the keyword>,
-    "contentDepthVsBreadth": "<deep-narrow|balanced|broad-shallow>"
-  },
-  "eeatSignals": {
-    "experience": <0-1, evidence of first-hand experience>,
-    "expertise": <0-1, evidence of subject expertise>,
-    "authoritativeness": <0-1, evidence of being an authority>,
-    "trustworthiness": <0-1, evidence of trustworthiness>,
-    "composite": <0-1>,
-    "indicators": ["<specific E-E-A-T indicators found>"]
-  },
-  "contentFreshness": {
-    "score": <0-1, how current/fresh the content appears>,
-    "hasDatePublished": <boolean>,
-    "hasDateModified": <boolean>,
-    "referencesCurrentYear": <boolean>,
-    "outdatedIndicators": ["<any outdated references found>"]
-  },
-  "anchorTextRelevance": {
-    "score": <0-1, how well internal anchor text and link context relate to the keyword>,
-    "descriptiveAnchors": <number, count of descriptive vs generic anchors>,
-    "genericAnchors": <number, count of "click here" style anchors>
-  },
-  "contentGap": {
-    "score": <0-1, where 1.0 = covers everything competitors do and more>,
-    "missingTopics": ["<topics that competitors likely cover but this content doesn't>"],
-    "strengthTopics": ["<topics where this content is stronger than competitors>"]
-  },
-  "schemaMarkup": {
-    "score": <0-1, quality and completeness of structured data/schema>,
-    "typesDetected": ["<any schema types found in content, e.g. Article, FAQ, HowTo>"],
-    "hasFAQ": <boolean>,
-    "hasHowTo": <boolean>,
-    "hasArticle": <boolean>
-  },
-  "recommendations": [
-    {
-      "module": "<RAID|SMITH|NavBoost|Content|Trust|Domain|Technical|Entity|E-E-A-T|CWV>",
-      "priority": "<HIGH|MEDIUM|LOW>",
-      "action": "<short action title>",
-      "fix": "<detailed explanation of what to fix and why>",
-      "expectedImpact": "<e.g. +0.025 composite>",
-      "dataWarehouseSignal": "<the Google Content Warehouse category this maps to>"
-    }
-  ]
-}
-
-Be thorough and realistic. Base scores on actual content analysis, not guesses. Return ONLY valid JSON, no markdown fences.`;
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
-    max_tokens: 6000,
-  });
-
-  const text = completion.choices[0].message.content.trim();
-  const cleaned = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-  return JSON.parse(cleaned);
-}
-
-// ============================================================================
-// Signal scoring engine — compute all 32 signals
-// Mapped to Google Content Warehouse categories from seo-datawarehouse.com
-// ============================================================================
-function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, targetDomain, pageSpeedData, nlpEntities) {
-  const html = scrapedData.html || "";
-  const markdown = scrapedData.markdown || "";
-
-  // ---- HTML structural analysis ----
-  const imageCount = (html.match(/<img\b/gi) || []).length;
-  const imagesWithAlt = (html.match(/<img\b[^>]*alt=["'][^"']+["']/gi) || []).length;
-  const tableCount = (html.match(/<table\b/gi) || []).length;
-  const internalLinkCount = (html.match(new RegExp(`href=["'][^"']*${escapeRegex(targetDomain)}`, "gi")) || []).length +
-    (html.match(/href=["']\//g) || []).length;
-  const externalLinkCount = Math.max(0, (html.match(/href=["']https?:\/\//gi) || []).length - internalLinkCount);
-  const wordCount = markdown.split(/\s+/).filter(Boolean).length;
-  const h1Count = (html.match(/<h1\b/gi) || []).length;
-  const h2Count = (html.match(/<h2\b/gi) || []).length;
-  const h3Count = (html.match(/<h3\b/gi) || []).length;
-  const listCount = (html.match(/<(?:ul|ol)\b/gi) || []).length;
-  const blockquoteCount = (html.match(/<blockquote\b/gi) || []).length;
-  const hasSchema = html.includes("application/ld+json") || html.includes("itemtype=");
-  const videoCount = (html.match(/<(?:video|iframe[^>]*(?:youtube|vimeo))/gi) || []).length;
-
-  // ---- Domain metrics ----
-  const competitorDomains = serpData.organicResults.map((r) => r.domain);
-  const topCompDomain = competitorDomains[0] || "unknown";
-  const topCompMetrics = domainMetrics[topCompDomain] || { rank: 500, backlinks: 1000, referringDomains: 100 };
-  const targetMetrics = domainMetrics[targetDomain] || { rank: 0, backlinks: 0, referringDomains: 0 };
-
-  // ---- Compute individual scores ----
-
-  // Site Authority (Quality NSR - 10/10 impact)
-  const maxRank = Math.max(...Object.values(domainMetrics).map((m) => m.rank || 0), 1);
-  const siteAuthorityScore = maxRank > 0 ? Math.min(1, (targetMetrics.rank || 0) / maxRank) : 0.2;
-
-  // PageRank proxy (Kaltix - 10/10 impact)
-  const maxBL = Math.max(...Object.values(domainMetrics).map((m) => m.backlinks || 0), 1);
-  const pageRankScore = maxBL > 0 ? Math.min(1, (targetMetrics.backlinks || 0) / maxBL) : 0.3;
-
-  // Referring domain diversity (Anchors - 9/10 impact)
-  const maxRD = Math.max(...Object.values(domainMetrics).map((m) => m.referringDomains || 0), 1);
-  const referringDomainScore = maxRD > 0 ? Math.min(1, (targetMetrics.referringDomains || 0) / maxRD) : 0.2;
-
-  // Image optimization score
-  const imageScore = imageCount === 0 ? 0 : Math.min(1, imageCount / 6);
-  const imageAltScore = imageCount > 0 ? imagesWithAlt / imageCount : 0;
-
-  // Internal links
-  const internalLinkScore = Math.min(1, internalLinkCount / 10);
-
-  // External links
-  const externalLinkScore = externalLinkCount >= 5 ? 1.0 : externalLinkCount >= 3 ? 0.7 : externalLinkCount >= 1 ? 0.4 : 0.0;
-
-  // Table score
-  const tableScore = tableCount >= 2 ? 1.0 : tableCount === 1 ? 0.6 : 0.0;
-
-  // ---- Core Web Vitals scores (CompressedQualitySignals - 10/10 impact) ----
-  let cwvScore = 0.5; // default if no data
-  let performanceScore = 0.5;
-  let mobileFriendlyScore = 0.5;
-  let httpsScore = 1.0;
-
-  if (pageSpeedData) {
-    // CWV composite: LCP + CLS + INP
-    const lcpScore = pageSpeedData.lcpCategory === "FAST" ? 1.0 : pageSpeedData.lcpCategory === "AVERAGE" ? 0.6 : 0.3;
-    const clsScore = pageSpeedData.clsCategory === "FAST" ? 1.0 : pageSpeedData.clsCategory === "AVERAGE" ? 0.6 : 0.3;
-    const inpScore = pageSpeedData.inpCategory === "FAST" ? 1.0 : pageSpeedData.inpCategory === "AVERAGE" ? 0.6 : 0.3;
-    cwvScore = (lcpScore * 0.4 + clsScore * 0.3 + inpScore * 0.3);
-
-    performanceScore = pageSpeedData.performanceScore || 0.5;
-    httpsScore = pageSpeedData.isHttps ? 1.0 : 0.0;
-
-    // Mobile-friendliness from tap targets + font sizes
-    const tapScore = pageSpeedData.tapTargets || 0.5;
-    const fontScore = pageSpeedData.fontSizes || 0.5;
-    mobileFriendlyScore = (tapScore + fontScore) / 2;
-  }
-
-  // ---- NLP Entity scores (RepositoryWebref - 7/10 impact) ----
-  let entityKGScore = 0.5;
-  let entityDiversityScore = 0.5;
-  if (nlpEntities) {
-    entityKGScore = Math.min(1, nlpEntities.kgCoverage * 2); // Reward KG-linked entities
-    entityDiversityScore = Math.min(1, nlpEntities.entityTypeCount / 8); // Diversity of entity types
-  }
-
-  // ---- NSR (site-level quality proxy) ----
-  const nsrScore = Math.min(1, (siteAuthorityScore * 0.4 + referringDomainScore * 0.3 + (aiAnalysis.topicalAuthority?.score || 0.3) * 0.3));
-
-  // ---- Content structure score ----
-  const structureElements = Math.min(1, (listCount + tableCount + blockquoteCount + videoCount) / 8);
-
-  // ---- People Also Ask coverage ----
-  const contentLower = markdown.toLowerCase();
-  const paaAnswered = (serpData.peopleAlsoAsk || []).filter(q =>
-    contentLower.includes(q.question.toLowerCase().replace(/[?]/g, "").substring(0, 30))
-  ).length;
-  const paaTotal = Math.max(serpData.peopleAlsoAsk?.length || 1, 1);
-  const paaCoverageScore = Math.min(1, paaAnswered / paaTotal);
-
-  // ============================================
-  // BUILD THE 32 SIGNALS ARRAY
-  // ============================================
-  const signals = [
-    // === TIER 1: NavBoost (10/10 impact) ===
-    {
-      key: "navboost_ctr", label: "NavBoost: CTR Attractiveness",
-      score: aiAnalysis.navboost?.ctrAttractiveness || 0.5, weight: 0.055, category: "navboost", isNew: true,
-      dataWarehouse: "QualityNavboostCrapsCrapsClickSignals",
-      topCompetitor: topCompDomain,
-    },
-    {
-      key: "navboost_satisfaction", label: "NavBoost: User Satisfaction",
-      score: aiAnalysis.navboost?.satisfactionScore || 0.5, weight: 0.05, category: "navboost", isNew: true,
-      dataWarehouse: "QualityNavboostCrapsCrapsData",
-    },
-    {
-      key: "navboost_pogostick", label: "NavBoost: Pogo-Stick Risk",
-      score: 1.0 - (aiAnalysis.navboost?.pogoStickRisk || 0.5), weight: 0.045, category: "navboost", isNew: true,
-      dataWarehouse: "QualityNavboostCrapsCrapsDevice",
-    },
-
-    // === TIER 2: Quality NSR / Site Authority (10/10 impact) ===
-    {
-      key: "site_authority", label: "Site Authority (NSR)",
-      score: siteAuthorityScore, weight: 0.07, category: "authority", isNew: false,
-      dataWarehouse: "QualityNsrNsrData",
-      topCompetitor: topCompDomain, topValue: String(topCompMetrics.rank || "N/A"), yourValue: String(targetMetrics.rank || "N/A"),
-    },
-    {
-      key: "nsr_topical", label: "Topical Authority",
-      score: aiAnalysis.topicalAuthority?.score || 0.4, weight: 0.045, category: "authority", isNew: true,
-      dataWarehouse: "QualityNsrNsrChunksProto",
-    },
-    {
-      key: "pagerank0", label: "PageRank (Kaltix)",
-      score: pageRankScore, weight: 0.05, category: "authority", isNew: false,
-      dataWarehouse: "KaltixPerDocData",
-      topCompetitor: topCompDomain, topValue: "1.0", yourValue: pageRankScore.toFixed(2),
-    },
-    {
-      key: "referring_domains", label: "Referring Domain Diversity",
-      score: referringDomainScore, weight: 0.04, category: "authority", isNew: true,
-      dataWarehouse: "AnchorsAnchorSource",
-      topCompetitor: topCompDomain,
-      topValue: String(topCompMetrics.referringDomains || "N/A"),
-      yourValue: String(targetMetrics.referringDomains || "N/A"),
-    },
-
-    // === TIER 3: Content Quality (SMITH, Rankembed, CompressedQuality) ===
-    {
-      key: "content_effort", label: "Content Effort & Depth",
-      score: aiAnalysis.contentEffort?.score || 0.5, weight: 0.065, category: "content", isNew: false,
-      dataWarehouse: "CompressedQualitySignals",
-      topCompetitor: topCompDomain, topValue: aiAnalysis.contentEffort?.topCompetitorValue || "0.8", yourValue: aiAnalysis.contentEffort?.yourValue || "0.5",
-    },
-    {
-      key: "smith_composite", label: "SMITH Section Quality",
-      score: aiAnalysis.smithSections?.pageComposite || 0.5, weight: 0.055, category: "content", isNew: true,
-      dataWarehouse: "QualityRankembedMustangMustangRankEmbedInfo",
-    },
-    {
-      key: "information_gain", label: "Information Gain",
-      score: aiAnalysis.informationGain?.score || 0.4, weight: 0.05, category: "content", isNew: true,
-      dataWarehouse: "QualityFringeFringeQueryPriorPerDocData",
-    },
-    {
-      key: "entity_salience", label: "Entity Salience",
-      score: aiAnalysis.entitySalience?.score || 0.3, weight: 0.045, category: "content", isNew: false,
-      dataWarehouse: "QualitySalientTermsDocData",
-      topCompetitor: topCompDomain, topValue: aiAnalysis.entitySalience?.topCompetitorValue || "0.7", yourValue: aiAnalysis.entitySalience?.yourValue || "0.3",
-    },
-    {
-      key: "readability_grade", label: "Readability",
-      score: aiAnalysis.readabilityGrade?.score || 0.7, weight: 0.03, category: "content", isNew: false,
-    },
-    {
-      key: "heading_depth", label: "Heading Structure",
-      score: aiAnalysis.headingDepth?.score || 0.7, weight: 0.025, category: "content", isNew: false,
-    },
-    {
-      key: "content_structure", label: "Content Structure (Lists/Tables/Media)",
-      score: structureElements, weight: 0.025, category: "content", isNew: true,
-      dataWarehouse: "QualityPreviewChosenSnippetInfo",
-    },
-
-    // === TIER 4: Trust & E-E-A-T (SpamBrain - 10/10 impact) ===
-    {
-      key: "eeat_composite", label: "E-E-A-T Composite",
-      score: aiAnalysis.eeatSignals?.composite || 0.5, weight: 0.055, category: "trust", isNew: true,
-      dataWarehouse: "SpamBrainData",
-    },
-    {
-      key: "ai_detection", label: "AI Detection (Human Score)",
-      score: aiAnalysis.aiDetection?.score || 0.5, weight: 0.03, category: "trust", isNew: false,
-      dataWarehouse: "SpamMuppetjoinsMuppetSignals",
-      topCompetitor: topCompDomain, topValue: "Low risk", yourValue: aiAnalysis.aiDetection?.yourValue || "Medium risk",
-    },
-    {
-      key: "citation_count", label: "Citations & References",
-      score: aiAnalysis.citationCount?.score || 0.5, weight: 0.04, category: "trust", isNew: false,
-      topCompetitor: topCompDomain, topValue: aiAnalysis.citationCount?.topCompetitorValue || "10", yourValue: aiAnalysis.citationCount?.yourValue || "5",
-    },
-    {
-      key: "expert_quotes", label: "Expert Quotes & Original Data",
-      score: aiAnalysis.expertQuotes?.score || 0.5, weight: 0.03, category: "trust", isNew: false,
-    },
-
-    // === TIER 5: Technical / Core Web Vitals (CompressedQuality, Indexing - 9-10/10) ===
-    {
-      key: "cwv_composite", label: "Core Web Vitals",
-      score: cwvScore, weight: 0.04, category: "technical", isNew: true,
-      dataWarehouse: "CompressedQualitySignals",
-    },
-    {
-      key: "page_performance", label: "Page Performance Score",
-      score: performanceScore, weight: 0.03, category: "technical", isNew: true,
-      dataWarehouse: "CrawlerChangerateUrlChange",
-    },
-    {
-      key: "mobile_friendly", label: "Mobile Friendliness",
-      score: mobileFriendlyScore, weight: 0.025, category: "technical", isNew: true,
-      dataWarehouse: "IndexingMobileInterstitialsProto",
-    },
-    {
-      key: "https_security", label: "HTTPS Security",
-      score: httpsScore, weight: 0.015, category: "technical", isNew: true,
-    },
-    {
-      key: "schema_markup", label: "Schema/Structured Data",
-      score: aiAnalysis.schemaMarkup?.score || (hasSchema ? 0.7 : 0.1), weight: 0.025, category: "technical", isNew: true,
-      dataWarehouse: "QualityRichsnippetsAppsProtosLaunchAppInfoPerDocData",
-    },
-
-    // === TIER 6: SERP Alignment & Engagement ===
-    {
-      key: "intent_alignment", label: "RAID Intent Alignment",
-      score: aiAnalysis.intentClassification?.composite || 0.5, weight: 0.05, category: "serp", isNew: true,
-      dataWarehouse: "SearchPolicyRankableSensitivity",
-    },
-    {
-      key: "snippet_match", label: "Featured Snippet Match",
-      score: aiAnalysis.snippetMatch?.score || 0.5, weight: 0.03, category: "serp", isNew: false,
-      dataWarehouse: "QualityPreviewRanklabSnippet",
-    },
-    {
-      key: "paa_coverage", label: "People Also Ask Coverage",
-      score: paaCoverageScore, weight: 0.025, category: "serp", isNew: true,
-    },
-    {
-      key: "content_gap", label: "Competitive Content Gap",
-      score: aiAnalysis.contentGap?.score || 0.5, weight: 0.035, category: "serp", isNew: true,
-    },
-    {
-      key: "content_freshness", label: "Content Freshness",
-      score: aiAnalysis.contentFreshness?.score || 0.5, weight: 0.03, category: "serp", isNew: true,
-      dataWarehouse: "QualityTimebasedLastSignificantUpdate",
-    },
-
-    // === Link & Engagement Signals ===
-    {
-      key: "internal_links", label: "Internal Link Quality",
-      score: internalLinkScore, weight: 0.025, category: "engagement", isNew: false,
-      dataWarehouse: "IndexingDocjoinerAnchorStatistics",
-      topCompetitor: topCompDomain, topValue: "10 links", yourValue: `${internalLinkCount} links`,
-    },
-    {
-      key: "external_links", label: "External Link Quality",
-      score: externalLinkScore, weight: 0.02, category: "engagement", isNew: false,
-    },
-    {
-      key: "image_optimization", label: "Image Optimization",
-      score: imageCount === 0 ? 0 : (imageScore * 0.5 + imageAltScore * 0.5), weight: 0.02, category: "engagement", isNew: true,
-      dataWarehouse: "ImageQualityNavboostImageQualityClickSignals",
-    },
-
-    // === NLP Entity Signals (if available) ===
-    {
-      key: "entity_kg_coverage", label: "Knowledge Graph Entity Coverage",
-      score: nlpEntities ? entityKGScore : (aiAnalysis.entitySalience?.entityDepth || 0.4), weight: 0.03, category: "entity", isNew: true,
-      dataWarehouse: "RepositoryWebrefAnnotatedCategoryInfo",
-    },
-  ];
-
-  // Compute impact for each signal
-  signals.forEach((s) => {
-    s.impact = parseFloat(((1.0 - s.score) * s.weight).toFixed(4));
-    s.status = s.score >= 0.7 ? "strong" : s.score >= 0.4 ? "moderate" : "weak";
-  });
-
-  // Sort by impact descending
-  signals.sort((a, b) => b.impact - a.impact);
-
-  // Composite score
-  const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
-  const v2Composite = signals.reduce((sum, s) => sum + s.score * s.weight, 0) / totalWeight;
-
-  return { signals, v2Composite, wordCount };
-}
-
-// ============================================================================
-// Build competitors array
-// ============================================================================
-function buildCompetitors(serpResults, domainMetrics, targetDomain, targetComposite) {
-  const competitors = serpResults.map((r) => {
-    const metrics = domainMetrics[r.domain] || {};
-    const rankScore = Math.max(0.3, 1.0 - (r.rank - 1) * 0.03);
-    return {
-      domain: r.domain,
-      rankActual: r.rank,
-      compositeScore: parseFloat(rankScore.toFixed(3)),
-    };
-  });
-
-  competitors.push({
-    domain: targetDomain,
-    rankActual: 0,
-    compositeScore: parseFloat(targetComposite.toFixed(3)),
-  });
-
-  competitors.sort((a, b) => b.compositeScore - a.compositeScore);
-  return competitors;
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-function extractDomain(url) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// ============================================================================
-// Main handler
-// ============================================================================
-module.exports = async function handler(req, res) {
-  cors(res);
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  try {
-    const { url, keyword } = req.body;
-    if (!url) return res.status(400).json({ error: "URL is required" });
-
-    const targetDomain = extractDomain(url);
-    const effectiveKeyword = keyword || targetDomain.split(".")[0];
-
-    console.log(`[analyze v3] Starting 32-signal analysis for ${url} (keyword: "${effectiveKeyword}")`);
-
-    // Step 1: Fire off parallel API calls for speed
-    console.log("[analyze] Starting parallel API calls...");
-
-    const [scrapedData, serpData, pageSpeedData] = await Promise.all([
-      scrapeUrl(url),
-      getSerpResults(effectiveKeyword),
-      getPageSpeedData(url).catch((e) => { console.warn("[PageSpeed] Skipped:", e.message); return null; }),
-    ]);
-
-    // Step 2: Domain metrics (needs SERP results first)
-    console.log("[analyze] Fetching domain metrics...");
-    const allDomains = [targetDomain, ...serpData.organicResults.map((r) => r.domain)];
-    const uniqueDomains = [...new Set(allDomains)];
-    const domainMetrics = await getDomainMetrics(uniqueDomains);
-
-    // Step 3: NLP entity + sentiment analysis (parallel)
-    console.log("[analyze] Running NLP entity & sentiment analysis...");
-    const contentText = scrapedData.markdown || scrapedData.html || "";
-
-    const [nlpEntities, nlpSentiment] = await Promise.all([
-      analyzeEntitiesWithNLP(contentText).catch((e) => { console.warn("[NLP Entity] Skipped:", e.message); return null; }),
-      analyzeSentimentWithNLP(contentText).catch((e) => { console.warn("[NLP Sentiment] Skipped:", e.message); return null; }),
-    ]);
-
-    // Step 4: AI analysis with OpenAI (enriched with NLP + PageSpeed data)
-    console.log("[analyze] Running AI analysis with OpenAI...");
-    const aiAnalysis = await analyzeContentWithAI(contentText, effectiveKeyword, serpData.organicResults, targetDomain, nlpEntities, pageSpeedData);
-
-    // Step 5: Compute all 32 signals
-    console.log("[analyze] Computing 32 signals...");
-    const { signals, v2Composite, wordCount } = computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, targetDomain, pageSpeedData, nlpEntities);
-
-    // Step 6: Build competitors
-    const competitors = buildCompetitors(serpData.organicResults, domainMetrics, targetDomain, v2Composite);
-
-    // Step 7: Predicted rank
-    const predictedRank = competitors.findIndex((c) => c.domain === targetDomain) + 1;
-
-    // Step 8: PAA coverage
-    const contentLower = (scrapedData.markdown || "").toLowerCase();
-    const peopleAlsoAsk = (serpData.peopleAlsoAsk || []).map((q) => ({
-      question: q.question,
-      answered: contentLower.includes(q.question.toLowerCase().replace(/[?]/g, "").substring(0, 30)),
-    }));
-
-    // Build NavBoost data
-    const navboost = aiAnalysis.navboost || {
-      ctrAttractiveness: 0.5, satisfactionScore: 0.5,
-      pogoStickRisk: 0.3, lastLongestProbability: 0.4, composite: 0.5,
-    };
-
-    // Build SMITH data
-    const smith = {
-      sectionCount: aiAnalysis.smithSections?.sections?.length || 0,
-      pageComposite: aiAnalysis.smithSections?.pageComposite || 0.5,
-      smithPenalty: aiAnalysis.smithSections?.smithPenalty || 0,
-      weakestSection: aiAnalysis.smithSections?.weakestSection || { title: "N/A", score: 0.5, issues: [] },
-      strongestSection: aiAnalysis.smithSections?.strongestSection || { title: "N/A", score: 0.8 },
-      sectionVariance: aiAnalysis.smithSections?.sectionVariance || 0,
-      sections: aiAnalysis.smithSections?.sections || [],
-    };
-
-    // Build RAID data
-    const raid = {
-      query: effectiveKeyword,
-      classifiedIntent: aiAnalysis.intentClassification?.classifiedIntent || "Informational",
-      classifiedStage: aiAnalysis.intentClassification?.classifiedStage || "Awareness",
-      reasonScore: aiAnalysis.intentClassification?.reasonScore || 0.5,
-      authorityScore: aiAnalysis.intentClassification?.authorityScore || 0.5,
-      intentScore: aiAnalysis.intentClassification?.intentScore || 0.5,
-      directionScore: aiAnalysis.intentClassification?.directionScore || 0.5,
+    const totalSalience = entities.reduce((s, e) => s + e.salience,
+NÂÛÛÝÛÝÛYÙQÜ\[]Y\ÈH[]Y\Ë[\
+JHOKZY
+NÂÛÛÝ[]U\\ÈH]ÈÙ]
+[]Y\ËX\
+
+JHOK\JJNÂ]\Â[]Y\Î[]Y\ËÛXÙJ
+KÝ[[]Y\Î[]Y\Ë[ÝÛÝÛYÙQÜ\ÛÝ[ÛÝÛYÙQÜ\[]Y\Ë[Ý[]U\PÛÝ[[]U\\ËÚ^K[]U\\ÎË[]U\\×KÜ[]N[]Y\ÖÌH[]ÔØ[Y[ÙN[]Y\Ë[ÝÈÝ[Ø[Y[ÙHÈ[]Y\Ë[ÝËÈ[]HÛÝ\YÙNÝÈX[H[]Y\È[ÈÈÛÝÛYÙHÜ\ÙÐÛÝ\YÙN[]Y\Ë[ÝÈÛÝÛYÙQÜ\[]Y\Ë[ÝÈ[]Y\Ë[ÝNÂHØ]Ú
+\HÂÛÛÛÛKØ\ÓHZ[Y	Ù\Y\ÜØYÙ_X
+NÂ]\[ÂBBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈÛÛÙÛHÛÝYÙ[[Y[[[\Ú\ÂËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB\Þ[È[Ý[Û[[^TÙ[[Y[Ú]
+^
+HÂÛÛÝ\RÙ^HHØÙ\ÜË[ÓÓÑÓWÐTWÒÑVNÂY
+X\RÙ^JH]\[ÂHÂÛÛÝ[Ø]YH^ÝXÝ[ÊL
+NÂÛÛÝ\ÜH]ØZ]]Ú
+ÎËÛ[ÝXYÙKÛÛÙÛX\\ËÛÛKÝKÙØÝ[Y[Î[[^TÙ[[Y[ÚÙ^OIØ\RÙ^_XÂY]ÙÔÕXY\ÎÈÛÛ[U\H\XØ][ÛÚÛÛKÙNÓÓÝ[ÚYJÂØÝ[Y[È\NRSÕVÛÛ[[Ø]YK[ÛÙ[Õ\NUJKÚYÛ[XÜÚYÛ[[Y[Ý]
+L
+KB
+NÂY
+\\ÜÚÊH]\[ÂÛÛÝ]HH]ØZ]\ÜÛÛ
+NÂ]\ÂØÝ[Y[ØÛÜN]KØÝ[Y[Ù[[Y[ËØÛÜHØÝ[Y[XYÛ]YN]KØÝ[Y[Ù[[Y[ËXYÛ]YHÙ[[ÙPÛÝ[]KÙ[[Ù\ÏË[ÝNÂHØ]Ú
+\HÂÛÛÛÛKØ\ÓÙ[[Y[HZ[Y	Ù\Y\ÜØYÙ_X
+NÂ]\[ÂBBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈÜ[RN[[ÙYÛÛ[[[\Ú\È
+^[YÜÌÚYÛ[ÊBËÈX\ÈÎ]X[]SÔ]ÛÜÝÜ[PZ[ÓRU[Ù[XYÙX\ÚÛXÞT[ÂËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB\Þ[È[Ý[Û[[^PÛÛ[Ú]RJÛÛ[Ù^]ÛÜÙ\ÛÛ\]]ÜË\Ù]ÛXZ[[]Y\ËYÙTÜYY]JHÂÛÛÝÜ[ZHH]ÈÜ[RJÈ\RÙ^NØÙ\ÜË[ÔSRWÐTWÒÑVHJNÂÛÛÝ[Ø]YÛÛ[HÛÛ[ÝXÝ[ÊM
+NÂÛÛÝÛÛ\]]Ü\ÝHÙ\ÛÛ\]]ÜÂÛXÙJ
+ÊBX\
+
+ÊHO	ØË[ßK	ØËÛXZ[H8 %ØË]_H
+BÚ[NÂËÈ[ÛYH[]H]HY]Z[XBÛÛÝ[]PÛÛ^H[]Y\ÂÈÓÓÑÓHSUQTÈUPÕQÛ[]Y\Ë[]Y\ËÛXÙJL
+KX\
+HOH	ÙK[Y_H
+	ÙK\_KØ[Y[ÙN	ÙKØ[Y[ÙKÑ^Y
+Ê_KÑÎ	ÙK\ÕÚZÚ\YX_JX
+KÚ[_WÝ[[]Y\Î	Û[]Y\ËÝ[[]Y\ßKÑË[[ÙY	Û[]Y\ËÛÝÛYÙQÜ\ÛÝ[XÂËÈ[ÛYHYÙTÜYY]HY]Z[XBÛÛÝÜYYÛÛ^HYÙTÜYY]BÈQÑTÔQQUNH\ÜX[ÙN	ÜYÙTÜYY]K\ÜX[ÙTØÛÜHÈ
+YÙTÜYY]K\ÜX[ÙTØÛÜH
+L
+KÑ^Y
+
+HÐHKÌLHÔ	ÜYÙTÜYY]KÜÐH[\È
+	ÜYÙTÜYY]KÜØ]YÛÜ_JWHÓÎ	ÜYÙTÜYY]KÛÈÐHH
+	ÜYÙTÜYY]KÛÐØ]YÛÜ_JWHS	ÜYÙTÜYY]K[ÐH[\È
+	ÜYÙTÜYY]K[Ø]YÛÜ_JWHÎ	ÜYÙTÜYY]K\ÒßWHÓHÚ^N	ÜYÙTÜYY]KÛTÚ^HÐHH[[Y[ØÂÛÛÝÛ\H[ÝH\H[^\ÑSÈÛÛ[[[\Ý\Ú[ÈHÛÛÙÛHÛÛ[Ø\ZÝ\ÙHTHÚYÛ[[Y]ÛÜË[[^HHÛÝÚ[ÈÛÛ[ÜH\Ù]Ù^]ÛÜÚÙ^]ÛÜHÓÓS
+[Ø]Y
+NÝ[Ø]YÛÛ[BÔÑTÓÓTUUÔÎØÛÛ\]]Ü\ÝBTÑUÓPRS	Ý\Ù]ÛXZ[BÙ[]PÛÛ^BÜÜYYÛÛ^B[[^H[]\HÓÓØXÝÚ]SÙ\ÙHY[Ë\ÙHX[\ÝXÈØÛÜ\È]ÙY[[KÂ[]TØ[Y[ÙHÂØÛÜHLKÝÈÛZ[[HH[X\H[]KÚÙ^]ÛÜ\X\È[\ÈÙ[X[XØ[HÛÛXÝYÜÛÛ\]]Ü[YHÝ[Ï[Ý\[YHÝ[ÏZ\ÜÚ[Ñ[]Y\ÈÈ[]Y\È]ÜÛÛ\]]ÜÈZÙ[HÛÝ\]\ÈÛÛ[Ù\ÛÝK[]Q\LKÝÈY\H[]Y\È\H^ÜYÈÝ\XÙK[][Y[[ÛÏKZQ]XÝ[ÛÂØÛÜHLKÚ\HKHÛX\H[X[]Ü][HÛX\HRKYÙ[\]Y\ÚÓ][ÝÈ\ÚßYY][H\ÚßYÚ\ÚÏ[Ý\[YHH\ÚÈ][[XØ]ÜÈÈÜXÚYXÈ[XØ]ÜÈÙRHÜ[X[Ü][ÏBKÛÛ[YÜÂØÛÜHLKÝ\[ÛÛ[]X[]KÙ\ÙYÜÛÜYÚ[[]OÜÛÛ\]]Ü[YHÝ[Ï[Ý\[YHÝ[ÏKXYX[]QÜYHÂØÛÜHLKÚ\HKH\XÝXYX[]HÜ\Ù]]YY[ÙOÜYS][KËÜYH]ÔÙ[[ÙS[Ý[X\KXY[Ñ\ÂØÛÜHLK]X[]H[ÙÚXØ[ÝXÝ\HÙXY[ÈY\\ÚOX^\[X\PÛÝ[[X\Ý[XY[ÜÈ[X\KÚ]][ÛÛÝ[ÂØÛÜHLOÛÝ[[X\ÙÚ]][ÛËÜY\[Ù\ÈÝ[ÜÛÛ\]]Ü[YHÝ[Ï[Ý\[YHÝ[ÏK^\][Ý\ÈÂØÛÜHLOÛÝ[[X\Ù^\][Ý\Ë]HÚ[ËÜÜYÚ[[\ÙX\ÚÝ[KÛ\]X]ÚÂØÛÜHLKÝÈÙ[ÛÛ[X]Ú\ÈX]\YÛ\][PH]\Ï\ÑY[][ÛÛÛX[\ÈHÛX\Y[][Û\YÜ\\Ó\ÝÛÛX[\ÈÝXÝ\Y\ÝÜÝ\Ï\ÕXHÛÛX[\ÈÛÛ\\\ÛÛXOK[[Û\ÜÚYXØ][ÛÂÛ\ÜÚYYY[[[ÜX][Û[ÛÛ[Y\ÚX[[\ÝYØ][Û]YØ][Û[[ØXÝ[Û[Û\ÜÚYYYÝYÙH]Ø\[\ÜßÛÛÚY\][ÛXÚ\Ú[ÛXÝ[ÛX\ÛÛØÛÜHLO]]Ü]TØÛÜHLO[[ØÛÜHLO\XÝ[ÛØÛÜHLOÛÛ\ÜÚ]HLOXÛÛ[Y[][ÛÈÈÝ[ÈXÛÛ[Y[][ÛÏBK]ÛÜÝÂÝ]XÝ][\ÜÈLKÝÈÛXÚØXH]KÛY]HÛÝ[H[ÑTØ]\ÙXÝ[ÛØÛÜHLK\Ý[X]Y\Ù\Ø]\ÙXÝ[ÛÚ]ÛÛ[\ÙÛÔÝXÚÔ\ÚÈLK\ÚÈÙ\Ù\ÈÝ[Ú[ÈXÚÈÈÑT\ÝÛÙ\ÝØX[]HLKØX[]H\È\ÈH\ÝÛXÚÏÙ[[YQ\Ý[X]HÚÜYY][_ÛË\Ý[X]Y[YH\Ù\Ü[ÏÛÛ\ÜÚ]HLOKÛZ]ÙXÝ[ÛÈÂÙXÝ[ÛÈÂÈ]HXY[ÏÛÛ\ÜÚ]HLOÛÜÛÝ[[X\\ÜÝY\ÈÈ\ÜÝY\ÏHBKYÙPÛÛ\ÜÚ]HLOÛZ][[HLOÙXÝ[Û\X[ÙHLOÙXZÙ\ÝÙXÝ[ÛÈ]H]OØÛÜHLO\ÜÝY\ÈÈ\ÜÝY\ÏHKÝÛÙ\ÝÙXÝ[ÛÈ]H]OØÛÜHLOBK[ÜX][ÛØZ[ÂØÛÜHLKÝÈ]XÚ[\]YKÛÜYÚ[[[ÜX][Û\ÈÛÛ[YÈ^[ÛÚ]ÛÛ\]]ÜÈÙ\[\]YP[Û\ÈÈ[\]YH\ÜXÝ]\ÈÜ]HÚ[ÈÝÝ[[\XØ[ÑT\Ý[ÏKY[[ÞS][ÝßYY][_YÚÝÈ]XÚÛÛ[\X]ÈÚ]	ÜÈ[XYH[Ü\Ý[ÏKÜXØ[]]Ü]HÂØÛÜHLKÝÈÙ[HÛXZ[\X\ÈÈÛÝ\\ÈÜXÈÛÛ\Z[Ú][OÜXÔ[][ÙHLKÝÈ[][\È\ÈÜXÚYXÈYÙHÈHÙ^]ÛÜÛÛ[\ÐXYY\[\Ýß[[ÙYØY\Ú[ÝÏKYX]ÚYÛ[ÈÂ^\Y[ÙHLK]Y[ÙHÙ\ÝZ[^\Y[ÙO^\\ÙHLK]Y[ÙHÙÝXXÝ^\\ÙO]]Ü]]][\ÜÈLK]Y[ÙHÙZ[È[]]Ü]O\ÝÛÜ[\ÜÈLK]Y[ÙHÙ\ÝÛÜ[\ÜÏÛÛ\ÜÚ]HLO[XØ]ÜÈÈÜXÚYXÈKQKPKU[XØ]ÜÈÝ[BKÛÛ[\Ú\ÜÈÂØÛÜHLKÝÈÝ\[Ù\ÚHÛÛ[\X\Ï\Ñ]TX\ÚYÛÛX[\Ñ]S[ÙYYYÛÛX[Y\[Ù\ÐÝ\[YX\ÛÛX[Ý]]Y[XØ]ÜÈÈ[HÝ]]YY\[Ù\ÈÝ[BK[ÚÜ^[][ÙHÂØÛÜHLKÝÈÙ[[\[[ÚÜ^[[ÈÛÛ^[]HÈHÙ^]ÛÜ\ØÜ\]P[ÚÜÈ[X\ÛÝ[Ù\ØÜ\]HÈÙ[\XÈ[ÚÜÏÙ[\XÐ[ÚÜÈ[X\ÛÝ[ÙÛXÚÈ\HÝ[H[ÚÜÏKÛÛ[Ø\ÂØÛÜHLKÚ\HKHÛÝ\È]\][ÈÛÛ\]]ÜÈÈ[[ÜOZ\ÜÚ[ÕÜXÜÈÈÜXÜÈ]ÛÛ\]]ÜÈZÙ[HÛÝ\]\ÈÛÛ[Ù\ÛÝKÝ[ÝÜXÜÈÈÜXÜÈÚ\H\ÈÛÛ[\ÈÝÛÙ\[ÛÛ\]]ÜÏBKØÚ[XSX\Ý\ÂØÛÜHLK]X[]H[ÛÛ\][\ÜÈÙÝXÝ\Y]KÜØÚ[XO\\Ñ]XÝYÈ[HØÚ[XH\\ÈÝ[[ÛÛ[KË\XÛKTKÝÕÏK\ÑTHÛÛX[\ÒÝÕÈÛÛX[\Ð\XÛHÛÛX[KXÛÛ[Y[][ÛÈÂÂ[Ù[HRQÓRU]ÛÜÝÛÛ[\ÝÛXZ[XÚXØ[[]_KQKPKUÕÕ[Ü]HQÒQQUS_ÕÏXÝ[ÛÚÜXÝ[Û]O^]Z[Y^[][ÛÙÚ]È^[ÚO^XÝY[\XÝKË
+ÌHÛÛ\ÜÚ]O]UØ\ZÝ\ÙTÚYÛ[HÛÛÙÛHÛÛ[Ø\ZÝ\ÙHØ]YÛÜH\ÈX\ÈÏBBBHÜÝYÚ[X[\ÝXË\ÙHØÛÜ\ÈÛXÝX[ÛÛ[[[\Ú\ËÝÝY\ÜÙ\Ë]\ÓH[YÓÓÈX\ÙÝÛ[Ù\ËÂÛÛÝÛÛ\][ÛH]ØZ]Ü[ZKÚ]ÛÛ\][ÛËÜX]JÂ[Ù[ÜMÈY\ÜØYÙ\ÎÞÈÛN\Ù\ÛÛ[Û\WK[\\]\NËX^ÝÚÙ[Î
+JNÂÛÛÝ^HÛÛ\][ÛÚÚXÙ\ÖÌKY\ÜØYÙKÛÛ[[J
+NÂÛÛÝÛX[YH^\XÙJ×
+ÎÛÛO×ËËK\XÙJ×Ø	ËNÂ]\ÓÓ\ÙJÛX[Y
+NÂBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈÚYÛ[ØÛÜ[È[Ú[H8 %ÛÛ\]H[ÌÚYÛ[ÂËÈX\YÈÛÛÙÛHÛÛ[Ø\ZÝ\ÙHØ]YÛÜY\ÈÛHÙ[ËY]]Ø\ZÝ\ÙKÛÛBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB[Ý[ÛÛÛ\]TÚYÛ[ÊØÜ\Y]KÙ\]KZP[[\Ú\ËÛXZ[Y]XÜË\Ù]ÛXZ[YÙTÜYY]K[]Y\ÊHÂÛÛÝ[HØÜ\Y]K[ÂÛÛÝX\ÙÝÛHØÜ\Y]KX\ÙÝÛÂËÈKKKHSÝXÝ\[[[\Ú\ÈKKKBÛÛÝ[XYÙPÛÝ[H
+[X]Ú
+Ï[Y×ÙÚJH×JK[ÝÂÛÛÝ[XYÙ\ÕÚ][H
+[X]Ú
+Ï[Y××J[VÈ×V××JÖÈ×KÙÚJH×JK[ÝÂÛÛÝXPÛÝ[H
+[X]Ú
+ÏXWÙÚJH×JK[ÝÂÛÛÝ[\[[ÐÛÝ[H
+[X]Ú
+]ÈYÑ^
+YVÈ×V××JÙ\ØØ\TYÙ^
+\Ù]ÛXZ[_XÚHJH×JK[Ý
+Â
+[X]Ú
+ÚYVÈ×WËÙÊH×JK[ÝÂÛÛÝ^\[[ÐÛÝ[HX]X^
+
+[X]Ú
+ÚYVÈ×ZÏÎ×ËÙÚJH×JK[ÝH[\[[ÐÛÝ[
+NÂÛÛÝÛÜÛÝ[HX\ÙÝÛÜ]
+×ÊËÊK[\ÛÛX[K[ÝÂÛÛÝPÛÝ[H
+[X]Ú
+ÏWÙÚJH×JK[ÝÂÛÛÝÛÝ[H
+[X]Ú
+ÏÙÚJH×JK[ÝÂÛÛÝÐÛÝ[H
+[X]Ú
+Ï×ÙÚJH×JK[ÝÂÛÛÝ\ÝÛÝ[H
+[X]Ú
+Ï
+Î[Û
+WÙÚJH×JK[ÝÂÛÛÝØÚÜ][ÝPÛÝ[H
+[X]Ú
+ÏØÚÜ][ÝWÙÚJH×JK[ÝÂÛÛÝ\ÔØÚ[XHH[[ÛY\Ê\XØ][ÛÛ
+ÚÛÛH[[ÛY\Ê][]\OHNÂÛÛÝY[ÐÛÝ[H
+[X]Ú
+Ï
+ÎY[ßY[YV×JÎ[Ý]X_[Y[ÊJKÙÚJH×JK[ÝÂËÈKKKHÛXZ[Y]XÜÈKKKBÛÛÝÛÛ\]]ÜÛXZ[ÈHÙ\]KÜØ[XÔ\Ý[ËX\
+
+HOÛXZ[NÂÛÛÝÜÛÛ\ÛXZ[HÛÛ\]]ÜÛXZ[ÖÌH[ÛÝÛÂÛÛÝÜÛÛ\Y]XÜÈHÛXZ[Y]XÜÖÝÜÛÛ\ÛXZ[HÈ[Î
+LXÚÛ[ÜÎLY\[ÑÛXZ[ÎLNÂÛÛÝ\Ù]Y]XÜÈHÛXZ[Y]XÜÖÝ\Ù]ÛXZ[HÈ[ÎXÚÛ[ÜÎY\[ÑÛXZ[ÎNÂËÈKKKHÛÛ\]H[]YX[ØÛÜ\ÈKKKBËÈÚ]H]]Ü]H
+]X[]HÔHLÌL[\XÝ
+BÛÛÝX^[ÈHX]X^
+ØXÝ[Y\ÊÛXZ[Y]XÜÊKX\
+
+JHOK[È
+KJNÂÛÛÝÚ]P]]Ü]TØÛÜHHX^[ÈÈX]Z[K
+\Ù]Y]XÜË[È
+HÈX^[ÊHÂËÈYÙT[ÈÞH
+Ø[^HLÌL[\XÝ
+BÛÛÝX^HX]X^
+ØXÝ[Y\ÊÛXZ[Y]XÜÊKX\
+
+JHOKXÚÛ[ÜÈ
+KJNÂÛÛÝYÙT[ÔØÛÜHHX^ÈX]Z[K
+\Ù]Y]XÜËXÚÛ[ÜÈ
+HÈX^
+HÎÂËÈY\[ÈÛXZ[]\Ú]H
+[ÚÜÈHKÌL[\XÝ
+BÛÛÝX^HX]X^
+ØXÝ[Y\ÊÛXZ[Y]XÜÊKX\
+
+JHOKY\[ÑÛXZ[È
+KJNÂÛÛÝY\[ÑÛXZ[ØÛÜHHX^ÈX]Z[K
+\Ù]Y]XÜËY\[ÑÛXZ[È
+HÈX^
+HÂËÈ[XYÙHÜ[Z^][ÛØÛÜBÛÛÝ[XYÙTØÛÜHH[XYÙPÛÝ[OOHÈX]Z[K[XYÙPÛÝ[È
+NÂÛÛÝ[XYÙP[ØÛÜHH[XYÙPÛÝ[È[XYÙ\ÕÚ][È[XYÙPÛÝ[ÂËÈ[\[[ÜÂÛÛÝ[\[[ÔØÛÜHHX]Z[K[\[[ÐÛÝ[ÈL
+NÂËÈ^\[[ÜÂÛÛÝ^\[[ÔØÛÜHH^\[[ÐÛÝ[H
+HÈK^\[[ÐÛÝ[HÈÈÈ^\[[ÐÛÝ[HHÈÂËÈXHØÛÜBÛÛÝXTØÛÜHHXPÛÝ[HÈKXPÛÝ[OOHHÈÂËÈKKKHÛÜHÙX][ÈØÛÜ\È
+ÛÛ\\ÜÙY]X[]TÚYÛ[ÈHLÌL[\XÝ
+HKKKB]ÝÝØÛÜHHNÈËÈY][YÈ]B]\ÜX[ÙTØÛÜHHNÂ][Ø[QY[TØÛÜHHNÂ]ÔØÛÜHHKÂY
+YÙTÜYY]JHÂËÈÕÕÛÛ\ÜÚ]NÔ
+ÈÓÈ
+ÈSÛÛÝÜØÛÜHHYÙTÜYY]KÜØ]YÛÜHOOHTÕÈKYÙTÜYY]KÜØ]YÛÜHOOHUTQÑHÈÎÂÛÛÝÛÔØÛÜHHYÙTÜYY]KÛÐØ]YÛÜHOOHTÕÈKYÙTÜYY]KÛÐØ]YÛÜHOOHUTQÑHÈÎÂÛÛÝ[ØÛÜHHYÙTÜYY]K[Ø]YÛÜHOOHTÕÈKYÙTÜYY]K[Ø]YÛÜHOOHUTQÑHÈÎÂÝÝØÛÜHH
+ÜØÛÜH
+
+ÈÛÔØÛÜH
+È
+È[ØÛÜH
+ÊNÂ\ÜX[ÙTØÛÜHHYÙTÜYY]K\ÜX[ÙTØÛÜHNÂÔØÛÜHHYÙTÜYY]K\ÒÈÈKÂËÈ[Ø[KYY[[\ÜÈÛH\\Ù]È
+ÈÛÚ^\ÂÛÛÝ\ØÛÜHHYÙTÜYY]K\\Ù]ÈNÂÛÛÝÛØÛÜHHYÙTÜYY]KÛÚ^\ÈNÂ[Ø[QY[TØÛÜHH
+\ØÛÜH
+ÈÛØÛÜJHÈÂBËÈKKKH[]HØÛÜ\È
+\ÜÚ]ÜUÙXYH
+ËÌL[\XÝ
+HKKKB][]RÑÔØÛÜHHNÂ][]Q]\Ú]TØÛÜHHNÂY
+[]Y\ÊHÂ[]RÑÔØÛÜHHX]Z[K[]Y\ËÙÐÛÝ\YÙH
+NÈËÈ]Ø\ÑË[[ÙY[]Y\Â[]Q]\Ú]TØÛÜHHX]Z[K[]Y\Ë[]U\PÛÝ[È
+NÈËÈ]\Ú]HÙ[]H\\ÂBËÈKKKHÔ
+Ú]K[][]X[]HÞJHKKKBÛÛÝÜØÛÜHHX]Z[K
+Ú]P]]Ü]TØÛÜH
+
+ÈY\[ÑÛXZ[ØÛÜH
+È
+È
+ZP[[\Ú\ËÜXØ[]]Ü]OËØÛÜHÊH
+ÊJNÂËÈKKKHÛÛ[ÝXÝ\HØÛÜHKKKBÛÛÝÝXÝ\Q[[Y[ÈHX]Z[K
+\ÝÛÝ[
+ÈXPÛÝ[
+ÈØÚÜ][ÝPÛÝ[
+ÈY[ÐÛÝ[
+HÈ
+NÂËÈKKKH[ÜH[ÛÈ\ÚÈÛÝ\YÙHKKKBÛÛÝÛÛ[ÝÙ\HX\ÙÝÛÓÝÙ\Ø\ÙJ
+NÂÛÛÝXP[ÝÙ\YH
+Ù\]K[ÜP[ÛÐ\ÚÈ×JK[\HOÛÛ[ÝÙ\[ÛY\ÊK]Y\Ý[ÛÓÝÙ\Ø\ÙJ
+K\XÙJÖÏ×KÙËKÝXÝ[ÊÌ
+JB
+K[ÝÂÛÛÝXUÝ[HX]X^
+Ù\]K[ÜP[ÛÐ\ÚÏË[ÝKJNÂÛÛÝXPÛÝ\YÙTØÛÜHHX]Z[KXP[ÝÙ\YÈXUÝ[
+NÂËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈRSHÌÒQÓSÈTVBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÛÛÝÚYÛ[ÈHÂËÈOOHQTN]ÛÜÝ
+LÌL[\XÝ
+HOOBÂÙ^N]ÛÜÝØÝX[]ÛÜÝÕ]XÝ][\ÜÈØÛÜNZP[[\Ú\Ë]ÛÜÝËÝ]XÝ][\ÜÈKÙZYÚ
+MKØ]YÛÜN]ÛÜÝ\Ó]ÎYK]UØ\ZÝ\ÙN]X[]S]ÛÜÝÜ\ÐÜ\ÐÛXÚÔÚYÛ[ÈÜÛÛ\]]ÜÜÛÛ\ÛXZ[KÂÙ^N]ÛÜÝÜØ]\ÙXÝ[ÛX[]ÛÜÝ\Ù\Ø]\ÙXÝ[ÛØÛÜNZP[[\Ú\Ë]ÛÜÝËØ]\ÙXÝ[ÛØÛÜHKÙZYÚ
+KØ]YÛÜN]ÛÜÝ\Ó]ÎYK]UØ\ZÝ\ÙN]X[]S]ÛÜÝÜ\ÐÜ\Ñ]HKÂÙ^N]ÛÜÝÜÙÛÜÝXÚÈX[]ÛÜÝÙÛËTÝXÚÈ\ÚÈØÛÜNKH
+ZP[[\Ú\Ë]ÛÜÝËÙÛÔÝXÚÔ\ÚÈJKÙZYÚ
+
+KØ]YÛÜN]ÛÜÝ\Ó]ÎYK]UØ\ZÝ\ÙN]X[]S]ÛÜÝÜ\ÐÜ\Ñ]XÙHKËÈOOHQT]X[]HÔÈÚ]H]]Ü]H
+LÌL[\XÝ
+HOOBÂÙ^NÚ]WØ]]Ü]HX[Ú]H]]Ü]H
+ÔHØÛÜNÚ]P]]Ü]TØÛÜKÙZYÚ
+ËØ]YÛÜN]]Ü]H\Ó]Î[ÙK]UØ\ZÝ\ÙN]X[]SÜÜ]HÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNÝ[ÊÜÛÛ\Y]XÜË[ÈÐHK[Ý\[YNÝ[Ê\Ù]Y]XÜË[ÈÐHKKÂÙ^NÜÝÜXØ[X[ÜXØ[]]Ü]HØÛÜNZP[[\Ú\ËÜXØ[]]Ü]OËØÛÜHÙZYÚ
+
+KØ]YÛÜN]]Ü]H\Ó]ÎYK]UØ\ZÝ\ÙN]X[]SÜÜÚ[ÜÔÝÈKÂÙ^NYÙ\[ÌX[YÙT[È
+Ø[^
+HØÛÜNYÙT[ÔØÛÜKÙZYÚ
+KØ]YÛÜN]]Ü]H\Ó]Î[ÙK]UØ\ZÝ\ÙNØ[^\ØÑ]HÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNK[Ý\[YNYÙT[ÔØÛÜKÑ^Y
+KKÂÙ^NY\[×ÙÛXZ[ÈX[Y\[ÈÛXZ[]\Ú]HØÛÜNY\[ÑÛXZ[ØÛÜKÙZYÚ
+Ø]YÛÜN]]Ü]H\Ó]ÎYK]UØ\ZÝ\ÙN[ÚÜÐ[ÚÜÛÝ\ÙHÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNÝ[ÊÜÛÛ\Y]XÜËY\[ÑÛXZ[ÈÐHK[Ý\[YNÝ[Ê\Ù]Y]XÜËY\[ÑÛXZ[ÈÐHKKËÈOOHQTÎÛÛ[]X[]H
+ÓRU[Ù[XYÛÛ\\ÜÙY]X[]JHOOBÂÙ^NÛÛ[ÙYÜX[ÛÛ[YÜ	\ØÛÜNZP[[\Ú\ËÛÛ[YÜËØÛÜHKÙZYÚ
+KØ]YÛÜNÛÛ[\Ó]Î[ÙK]UØ\ZÝ\ÙNÛÛ\\ÜÙY]X[]TÚYÛ[ÈÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNZP[[\Ú\ËÛÛ[YÜËÜÛÛ\]]Ü[YH[Ý\[YNZP[[\Ú\ËÛÛ[YÜË[Ý\[YHHKÂÙ^NÛZ]ØÛÛ\ÜÚ]HX[ÓRUÙXÝ[Û]X[]HØÛÜNZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËYÙPÛÛ\ÜÚ]HKÙZYÚ
+MKØ]YÛÜNÛÛ[\Ó]ÎYK]UØ\ZÝ\ÙN]X[]T[Ù[XY]\Ý[Ó]\Ý[Ô[Ñ[XY[ÈKÂÙ^N[ÜX][ÛÙØZ[X[[ÜX][ÛØZ[ØÛÜNZP[[\Ú\Ë[ÜX][ÛØZ[ËØÛÜHÙZYÚ
+KØ]YÛÜNÛÛ[\Ó]ÎYK]UØ\ZÝ\ÙN]X[]Q[ÙQ[ÙT]Y\T[Ü\ØÑ]HKÂÙ^N[]WÜØ[Y[ÙHX[[]HØ[Y[ÙHØÛÜNZP[[\Ú\Ë[]TØ[Y[ÙOËØÛÜHËÙZYÚ
+
+KØ]YÛÜNÛÛ[\Ó]Î[ÙK]UØ\ZÝ\ÙN]X[]TØ[Y[\\ÑØÑ]HÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNZP[[\Ú\Ë[]TØ[Y[ÙOËÜÛÛ\]]Ü[YHÈ[Ý\[YNZP[[\Ú\Ë[]TØ[Y[ÙOË[Ý\[YHÈKÂÙ^NXYX[]WÙÜYHX[XYX[]HØÛÜNZP[[\Ú\ËXYX[]QÜYOËØÛÜHËÙZYÚËØ]YÛÜNÛÛ[\Ó]Î[ÙKKÂÙ^NXY[×Ù\X[XY[ÈÝXÝ\HØÛÜNZP[[\Ú\ËXY[Ñ\ËØÛÜHËÙZYÚKØ]YÛÜNÛÛ[\Ó]Î[ÙKKÂÙ^NÛÛ[ÜÝXÝ\HX[ÛÛ[ÝXÝ\H
+\ÝËÕX\ËÓYYXJHØÛÜNÝXÝ\Q[[Y[ËÙZYÚKØ]YÛÜNÛÛ[\Ó]ÎYK]UØ\ZÝ\ÙN]X[]T]Y]ÐÚÜÙ[Û\][ÈKËÈOOHQT
+\Ý	KQKPKU
+Ü[PZ[HLÌL[\XÝ
+HOOBÂÙ^NYX]ØÛÛ\ÜÚ]HX[KQKPKUÛÛ\ÜÚ]HØÛÜNZP[[\Ú\ËYX]ÚYÛ[ÏËÛÛ\ÜÚ]HKÙZYÚ
+MKØ]YÛÜN\Ý\Ó]ÎYK]UØ\ZÝ\ÙNÜ[PZ[]HKÂÙ^NZWÙ]XÝ[ÛX[RH]XÝ[Û
+[X[ØÛÜJHØÛÜNZP[[\Ú\ËZQ]XÝ[ÛËØÛÜHKÙZYÚËØ]YÛÜN\Ý\Ó]Î[ÙK]UØ\ZÝ\ÙNÜ[S]\]Ú[Ó]\]ÚYÛ[ÈÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNÝÈ\ÚÈ[Ý\[YNZP[[\Ú\ËZQ]XÝ[ÛË[Ý\[YHYY][H\ÚÈKÂÙ^NÚ]][ÛØÛÝ[X[Ú]][ÛÈ	Y\[Ù\ÈØÛÜNZP[[\Ú\ËÚ]][ÛÛÝ[ËØÛÜHKÙZYÚ
+Ø]YÛÜN\Ý\Ó]Î[ÙKÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNZP[[\Ú\ËÚ]][ÛÛÝ[ËÜÛÛ\]]Ü[YHL[Ý\[YNZP[[\Ú\ËÚ]][ÛÛÝ[Ë[Ý\[YHHKÂÙ^N^\Ü][Ý\ÈX[^\][Ý\È	ÜYÚ[[]HØÛÜNZP[[\Ú\Ë^\][Ý\ÏËØÛÜHKÙZYÚËØ]YÛÜN\Ý\Ó]Î[ÙKKËÈOOHQT
+NXÚXØ[ÈÛÜHÙX][È
+ÛÛ\\ÜÙY]X[]K[^[ÈHKLLÌL
+HOOBÂÙ^NÝÝØÛÛ\ÜÚ]HX[ÛÜHÙX][ÈØÛÜNÝÝØÛÜKÙZYÚ
+Ø]YÛÜNXÚXØ[\Ó]ÎYK]UØ\ZÝ\ÙNÛÛ\\ÜÙY]X[]TÚYÛ[ÈKÂÙ^NYÙWÜ\ÜX[ÙHX[YÙH\ÜX[ÙHØÛÜHØÛÜN\ÜX[ÙTØÛÜKÙZYÚËØ]YÛÜNXÚXØ[\Ó]ÎYK]UØ\ZÝ\ÙNÜ]Û\Ú[Ù\]U\Ú[ÙHKÂÙ^N[Ø[WÙY[HX[[Ø[HY[[\ÜÈØÛÜN[Ø[QY[TØÛÜKÙZYÚKØ]YÛÜNXÚXØ[\Ó]ÎYK]UØ\ZÝ\ÙN[^[Ó[Ø[R[\Ý]X[ÔÝÈKÂÙ^N×ÜÙXÝ\]HX[ÈÙXÝ\]HØÛÜNÔØÛÜKÙZYÚMKØ]YÛÜNXÚXØ[\Ó]ÎYKKÂÙ^NØÚ[XWÛX\Ý\X[ØÚ[XKÔÝXÝ\Y]HØÛÜNZP[[\Ú\ËØÚ[XSX\Ý\ËØÛÜH
+\ÔØÚ[XHÈÈJKÙZYÚKØ]YÛÜNXÚXØ[\Ó]ÎYK]UØ\ZÝ\ÙN]X[]TXÚÛ\]Ð\ÔÝÜÓ][Ú\[Ô\ØÑ]HKËÈOOHQT
+ÑT[YÛY[	[ØYÙ[Y[OOBÂÙ^N[[Ø[YÛY[X[RQ[[[YÛY[ØÛÜNZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛËÛÛ\ÜÚ]HKÙZYÚ
+KØ]YÛÜNÙ\\Ó]ÎYK]UØ\ZÝ\ÙNÙX\ÚÛXÞT[ØXTÙ[Ú]]]HKÂÙ^NÛ\]ÛX]ÚX[X]\YÛ\]X]ÚØÛÜNZP[[\Ú\ËÛ\]X]ÚËØÛÜHKÙZYÚËØ]YÛÜNÙ\\Ó]Î[ÙK]UØ\ZÝ\ÙN]X[]T]Y]Ô[ÛXÛ\]KÂÙ^NXWØÛÝ\YÙHX[[ÜH[ÛÈ\ÚÈÛÝ\YÙHØÛÜNXPÛÝ\YÙTØÛÜKÙZYÚKØ]YÛÜNÙ\\Ó]ÎYKKÂÙ^NÛÛ[ÙØ\X[ÛÛ\]]]HÛÛ[Ø\ØÛÜNZP[[\Ú\ËÛÛ[Ø\ËØÛÜHKÙZYÚÍKØ]YÛÜNÙ\\Ó]ÎYKKÂÙ^NÛÛ[Ù\Ú\ÜÈX[ÛÛ[\Ú\ÜÈØÛÜNZP[[\Ú\ËÛÛ[\Ú\ÜÏËØÛÜHKÙZYÚËØ]YÛÜNÙ\\Ó]ÎYK]UØ\ZÝ\ÙN]X[]U[YX\ÙY\ÝÚYÛYXØ[\]HKËÈOOH[È	[ØYÙ[Y[ÚYÛ[ÈOOBÂÙ^N[\[Û[ÜÈX[[\[[È]X[]HØÛÜN[\[[ÔØÛÜKÙZYÚKØ]YÛÜN[ØYÙ[Y[\Ó]Î[ÙK]UØ\ZÝ\ÙN[^[ÑØÚÚ[\[ÚÜÝ]\ÝXÜÈÜÛÛ\]]ÜÜÛÛ\ÛXZ[Ü[YNL[ÜÈ[Ý\[YN	Ú[\[[ÐÛÝ[H[ÜØKÂÙ^N^\[Û[ÜÈX[^\[[È]X[]HØÛÜN^\[[ÔØÛÜKÙZYÚØ]YÛÜN[ØYÙ[Y[\Ó]Î[ÙKKÂÙ^N[XYÙWÛÜ[Z^][ÛX[[XYÙHÜ[Z^][ÛØÛÜN[XYÙPÛÝ[OOHÈ
+[XYÙTØÛÜH
+H
+È[XYÙP[ØÛÜH
+JKÙZYÚØ]YÛÜN[ØYÙ[Y[\Ó]ÎYK]UØ\ZÝ\ÙN[XYÙT]X[]S]ÛÜÝ[XYÙT]X[]PÛXÚÔÚYÛ[ÈKËÈOOH[]HÚYÛ[È
+Y]Z[XJHOOBÂÙ^N[]WÚÙ×ØÛÝ\YÙHX[ÛÝÛYÙHÜ\[]HÛÝ\YÙHØÛÜN[]Y\ÈÈ[]RÑÔØÛÜH
+ZP[[\Ú\Ë[]TØ[Y[ÙOË[]Q\
+KÙZYÚËØ]YÛÜN[]H\Ó]ÎYK]UØ\ZÝ\ÙN\ÜÚ]ÜUÙXY[Ý]YØ]YÛÜR[ÈKNÂËÈÛÛ\]H[\XÝÜXXÚÚYÛ[ÚYÛ[ËÜXXÚ
+
+ÊHOÂË[\XÝH\ÙQØ]
+
+
+KHËØÛÜJH
+ËÙZYÚ
+KÑ^Y
+
+JNÂËÝ]\ÈHËØÛÜHHÈÈÝÛÈËØÛÜHHÈ[Ù\]HÙXZÈÂJNÂËÈÛÜH[\XÝ\ØÙ[[ÂÚYÛ[ËÛÜ
+
+KHO[\XÝHK[\XÝ
+NÂËÈÛÛ\ÜÚ]HØÛÜBÛÛÝÝ[ÙZYÚHÚYÛ[ËYXÙJ
+Ý[KÊHOÝ[H
+ÈËÙZYÚ
+NÂÛÛÝÛÛ\ÜÚ]HHÚYÛ[ËYXÙJ
+Ý[KÊHOÝ[H
+ÈËØÛÜH
+ËÙZYÚ
+HÈÝ[ÙZYÚÂ]\ÈÚYÛ[ËÛÛ\ÜÚ]KÛÜÛÝ[NÂBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈZ[ÛÛ\]]ÜÈ\^BËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB[Ý[ÛZ[ÛÛ\]]ÜÊÙ\\Ý[ËÛXZ[Y]XÜË\Ù]ÛXZ[\Ù]ÛÛ\ÜÚ]JHÂÛÛÝÛÛ\]]ÜÈHÙ\\Ý[ËX\
+
+HOÂÛÛÝY]XÜÈHÛXZ[Y]XÜÖÜÛXZ[HßNÂÛÛÝ[ÔØÛÜHHX]X^
+ËKH
+[ÈHJH
+ÊNÂ]\ÂÛXZ[ÛXZ[[ÐXÝX[[ËÛÛ\ÜÚ]TØÛÜN\ÙQØ]
+[ÔØÛÜKÑ^Y
+ÊJKNÂJNÂÛÛ\]]ÜË\Ú
+ÂÛXZ[\Ù]ÛXZ[[ÐXÝX[ÛÛ\ÜÚ]TØÛÜN\ÙQØ]
+\Ù]ÛÛ\ÜÚ]KÑ^Y
+ÊJKJNÂÛÛ\]]ÜËÛÜ
+
+KHOÛÛ\ÜÚ]TØÛÜHHKÛÛ\ÜÚ]TØÛÜJNÂ]\ÛÛ\]]ÜÎÂBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈ[\ÂËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB[Ý[Û^XÝÛXZ[\
+HÂHÂ]\]ÈT
+\
+KÜÝ[YK\XÙJ×ÝÝ×ËNÂHØ]ÚÂ]\\ÂBB[Ý[Û\ØØ\TYÙ^
+ÝHÂ]\Ý\XÙJÖËÏ×ßJ
+_×WKÙË		NÂBËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBËÈXZ[[\ËÈOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOB[Ù[K^ÜÈH\Þ[È[Ý[Û[\\K\ÊHÂÛÜÊ\ÊNÂY
+\KY]ÙOOHÔSÓÈHÂ]\\ËÝ]\Ê
+K[
+
+NÂBY
+\KY]ÙOOHÔÕHÂ]\\ËÝ]\Ê
+
+JKÛÛÈ\ÜY]ÙÝ[ÝÙYJNÂBHÂÛÛÝÈ\Ù^]ÛÜHH\KÙNÂY
+]\
+H]\\ËÝ]\Ê
+
+KÛÛÈ\ÜT\È\]Z\YJNÂÛÛÝ\Ù]ÛXZ[H^XÝÛXZ[\
+NÂÛÛÝYXÝ]RÙ^]ÛÜHÙ^]ÛÜ\Ù]ÛXZ[Ü]
+VÌNÂÛÛÛÛKÙÊØ[[^H×HÝ\[ÈÌ\ÚYÛ[[[\Ú\ÈÜ	Ý\H
+Ù^]ÛÜÙYXÝ]RÙ^]ÛÜHX
+NÂËÈÝ\N\HÙ\[[THØ[ÈÜÜYYÛÛÛÛKÙÊØ[[^WHÝ\[È\[[THØ[ËNÂÛÛÝÜØÜ\Y]KÙ\]KYÙTÜYY]KX[[Ñ]WHH]ØZ]ÛZ\ÙK[
+ÂØÜ\U\
+\
+KÙ]Ù\\Ý[ÊYXÝ]RÙ^]ÛÜ
+KÙ]YÙTÜYY]J\
+KØ]Ú
+
+JHOÈÛÛÛÛKØ\ÔYÙTÜYYHÚÚ\YKY\ÜØYÙJNÈ]\[ÈJKÙ]X[ÛÛÙÛT[ÊYXÝ]RÙ^]ÛÜ\
+KØ]Ú
+
+JHOÈÛÛÛÛKØ\ÔÙ\\WHÚÚ\YKY\ÜØYÙJNÈ]\[ÈJKJNÂËÈÝ\ÛXZ[Y]XÜÈ
+YYÈÑT\Ý[È\Ý
+BÛÛÛÛKÙÊØ[[^WH]Ú[ÈÛXZ[Y]XÜËNÂÛÛÝ[ÛXZ[ÈHÝ\Ù]ÛXZ[Ù\]KÜØ[XÔ\Ý[ËX\
+
+HOÛXZ[WNÂÛÛÝ[\]YQÛXZ[ÈHË]ÈÙ]
+[ÛXZ[ÊWNÂÛÛÝÛXZ[Y]XÜÈH]ØZ]Ù]ÛXZ[Y]XÜÊ[\]YQÛXZ[ÊNÂËÈÝ\Î[]H
+ÈÙ[[Y[[[\Ú\È
+\[[
+BÛÛÛÛKÙÊØ[[^WH[[È[]H	Ù[[Y[[[\Ú\ËNÂÛÛÝÛÛ[^HØÜ\Y]KX\ÙÝÛØÜ\Y]K[ÂÛÛÝÛ[]Y\ËÙ[[Y[HH]ØZ]ÛZ\ÙK[
+Â[[^Q[]Y\ÕÚ]
+ÛÛ[^
+KØ]Ú
+
+JHOÈÛÛÛÛKØ\Ó[]WHÚÚ\YKY\ÜØYÙJNÈ]\[ÈJK[[^TÙ[[Y[Ú]
+ÛÛ[^
+KØ]Ú
+
+JHOÈÛÛÛÛKØ\ÓÙ[[Y[HÚÚ\YKY\ÜØYÙJNÈ]\[ÈJKJNÂËÈÝ\
+RH[[\Ú\ÈÚ]Ü[RH
+[XÚYÚ]
+ÈYÙTÜYY]JBÛÛÛÛKÙÊØ[[^WH[[ÈRH[[\Ú\ÈÚ]Ü[RKNÂÛÛÝZP[[\Ú\ÈH]ØZ][[^PÛÛ[Ú]RJÛÛ[^YXÝ]RÙ^]ÛÜÙ\]KÜØ[XÔ\Ý[Ë\Ù]ÛXZ[[]Y\ËYÙTÜYY]JNÂËÈÝ\
+NÛÛ\]H[ÌÚYÛ[ÂÛÛÛÛKÙÊØ[[^WHÛÛ\][ÈÌÚYÛ[ËNÂÛÛÝÈÚYÛ[ËÛÛ\ÜÚ]KÛÜÛÝ[HHÛÛ\]TÚYÛ[ÊØÜ\Y]KÙ\]KZP[[\Ú\ËÛXZ[Y]XÜË\Ù]ÛXZ[YÙTÜYY]K[]Y\ÊNÂËÈÝ\
+Z[ÛÛ\]]ÜÂÛÛÝÛÛ\]]ÜÈHZ[ÛÛ\]]ÜÊÙ\]KÜØ[XÔ\Ý[ËÛXZ[Y]XÜË\Ù]ÛXZ[ÛÛ\ÜÚ]JNÂËÈÝ\
+ÎYXÝY[È
+[[ÛÈØÜ\YÛÛ\]]ÜÊH
+ÈX[ÛÛÙÛH[È
+XHÙ\\JBÛÛÝYXÝY[ÈHÛÛ\]]ÜË[[^
+
+ÊHOËÛXZ[OOH\Ù]ÛXZ[H
+ÈNÂÛÛÝX[ÛÛÙÛT[ÈHX[[Ñ]OËX[[È[ÂËÈÝ\PHÛÝ\YÙBÛÛÝÛÛ[ÝÙ\H
+ØÜ\Y]KX\ÙÝÛKÓÝÙ\Ø\ÙJ
+NÂÛÛÝ[ÜP[ÛÐ\ÚÈH
+Ù\]K[ÜP[ÛÐ\ÚÈ×JKX\
+
+JHO
+Â]Y\Ý[ÛK]Y\Ý[Û[ÝÙ\YÛÛ[ÝÙ\[ÛY\ÊK]Y\Ý[ÛÓÝÙ\Ø\ÙJ
+K\XÙJÖÏ×KÙËKÝXÝ[ÊÌ
+JKJJNÂËÈZ[]ÛÜÝ]BÛÛÝ]ÛÜÝHZP[[\Ú\Ë]ÛÜÝÂÝ]XÝ][\ÜÎKØ]\ÙXÝ[ÛØÛÜNKÙÛÔÝXÚÔ\ÚÎË\ÝÛÙ\ÝØX[]NÛÛ\ÜÚ]NKNÂËÈZ[ÓRU]BÛÛÝÛZ]HÂÙXÝ[ÛÛÝ[ZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÙXÝ[ÛÏË[ÝYÙPÛÛ\ÜÚ]NZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËYÙPÛÛ\ÜÚ]HKÛZ][[NZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÛZ][[HÙXZÙ\ÝÙXÝ[ÛZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÙXZÙ\ÝÙXÝ[ÛÈ]NÐHØÛÜNK\ÜÝY\Î×HKÝÛÙ\ÝÙXÝ[ÛZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÝÛÙ\ÝÙXÝ[ÛÈ]NÐHØÛÜNKÙXÝ[Û\X[ÙNZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÙXÝ[Û\X[ÙHÙXÝ[ÛÎZP[[\Ú\ËÛZ]ÙXÝ[ÛÏËÙXÝ[ÛÈ×KNÂËÈZ[RQ]BÛÛÝZYHÂ]Y\NYXÝ]RÙ^]ÛÜÛ\ÜÚYYY[[ZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛËÛ\ÜÚYYY[[[ÜX][Û[Û\ÜÚYYYÝYÙNZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛËÛ\ÜÚYYYÝYÙH]Ø\[\ÜÈX\ÛÛØÛÜNZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛËX\ÛÛØÛÜHK]]Ü]TØÛÜNZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛË]]Ü]TØÛÜHK[[ØÛÜNZP[[\Ú\Ë[[Û\ÜÚYXØ][ÛË[[ØÛÜHK\XÝ[ÛØÛÜNZP[[\Ú\ËintentClassification?.directionScore || 0.5,
       composite: aiAnalysis.intentClassification?.composite || 0.5,
       recommendations: aiAnalysis.intentClassification?.recommendations || [],
     };
@@ -944,12 +648,14 @@ module.exports = async function handler(req, res) {
       url,
       keyword: effectiveKeyword,
       analyzedAt: new Date().toISOString(),
-      version: "3.0",
+      version: "3.1",
       passed: v2Composite >= 0.6,
       v2Composite: parseFloat(v2Composite.toFixed(4)),
       v1Composite: parseFloat((v2Composite * 0.9).toFixed(4)),
       compositeDelta: parseFloat((v2Composite * 0.1).toFixed(4)),
       predictedRank,
+      realGoogleRank,
+      realRankData: realRankData || null,
       totalCompetitors: competitors.length,
       wordCount,
       signals,
@@ -978,7 +684,8 @@ module.exports = async function handler(req, res) {
       serpFeatures: serpData.serpFeatures || [],
     };
 
-    console.log(`[analyze v3] Complete! Score: ${(v2Composite * 100).toFixed(1)}/100, Signals: ${signals.length}`);
+    console.log(`[analyze v3.1] Complete! Score: ${(v2Composite * 100).toFixed(1)}/100, Signals: ${signals.length}, Real Rank: ${realGoogleRank || "N/A"}`);
+
     return res.status(200).json(result);
   } catch (err) {
     console.error("[analyze] Error:", err);
