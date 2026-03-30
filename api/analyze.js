@@ -1,4 +1,4 @@
-// Content Grader API v3.0 â Expanded 32-signal analysis engine
+// Content Grader API v3.0 -- Expanded 32-signal analysis engine
 // Orchestrates: Firecrawl + DataForSEO + OpenAI + PageSpeed Insights + Google NLP
 // Signal architecture mapped to Google Content Warehouse API (seo-datawarehouse.com)
 
@@ -47,7 +47,7 @@ async function scrapeUrl(url) {
 async function getRealGoogleRank(keyword, targetUrl) {
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey) {
-    console.warn("[SerpApi] SERPAPI_KEY not set â skipping real rank lookup");
+    console.warn("[SerpApi] SERPAPI_KEY not set -- skipping real rank lookup");
     return null;
   }
 
@@ -64,7 +64,7 @@ async function getRealGoogleRank(keyword, targetUrl) {
 
     const resp = await fetch(`https://serpapi.com/search.json?${params}`);
     if (!resp.ok) {
-      console.warn(`[SerpApi] HTTP ${resp.status} â skipping`);
+      console.warn(`[SerpApi] HTTP ${resp.status} -- skipping`);
       return null;
     }
 
@@ -172,7 +172,7 @@ async function getSerpResults(keyword) {
         title: fSnippet.title || "",
         description: fSnippet.description || "",
       };
-    }  }
+    }
 
     // Catalog all SERP feature types present
     const featureTypes = new Set(items.map((i) => i.type));
@@ -398,7 +398,7 @@ async function analyzeContentWithAI(content, keyword, serpCompetitors, targetDom
   const truncatedContent = content.substring(0, 14000);
   const competitorList = serpCompetitors
     .slice(0, 7)
-    .map((c) => `${c.rank}. ${c.domain} â "${c.title}"`)
+    .map((c) => `${c.rank}. ${c.domain} -- "${c.title}"`)
     .join("\n");
 
   // Include NLP entity data if available
@@ -568,7 +568,7 @@ Be thorough and realistic. Base scores on actual content analysis, not guesses. 
 }
 
 // ============================================================================
-// Signal scoring engine â compute all 32 signals
+// Signal scoring engine -- compute all 32 signals
 // Mapped to Google Content Warehouse categories from seo-datawarehouse.com
 // ============================================================================
 function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, targetDomain, pageSpeedData, nlpEntities) {
