@@ -1,4 +1,5 @@
-// Content Grader API v3.0 -- Expanded 32-signal analysis engine
+// Content Grader API v3.2 -- Advanced 34-signal analysis engine
+// Warehouse-accurate mappings from seo-datawarehouse.com (2,593 models, 14,027 attributes)
 // Orchestrates: Firecrawl + DataForSEO + OpenAI + PageSpeed Insights + Google NLP
 // Signal architecture mapped to Google Content Warehouse API (seo-datawarehouse.com)
 
@@ -541,6 +542,25 @@ Analyze and return a JSON object with ALL of these fields. Use realistic scores 
     "hasHowTo": <boolean>,
     "hasArticle": <boolean>
   },
+  "titleMatch": {
+    "score": <0-1, how well the page title matches the primary keyword and likely search queries>,
+    "titleText": "<the actual page title/H1>",
+    "keywordInTitle": <boolean, true if primary keyword appears in title>,
+    "frontLoaded": <boolean, true if keyword appears in first half of title>,
+    "suggestedTitle": "<improved title suggestion if score is low>"
+  },
+  "pandaRisk": {
+    "score": <0-1, inverse of thin content risk -- 1.0 means no Panda risk (substantial content), 0.0 means high Panda risk (thin/low-effort)>,
+    "thinContentIndicators": ["<any indicators of thin, low-effort, or auto-generated content>"],
+    "depthScore": <0-1, how comprehensive and substantive the content is>,
+    "contentToAdRatio": "<high-content|balanced|ad-heavy, ratio of useful content vs boilerplate/ads>"
+  },
+  "chardQuality": {
+    "score": <0-1, overall content quality prediction based on originality, depth, and breadth balance>,
+    "originalityScore": <0-1, how unique/original is this content vs typical SERP results>,
+    "depthBreadthBalance": "<deep-narrow|balanced|broad-shallow>",
+    "substantiveInsights": <number, count of genuinely insightful/non-obvious points in the content>
+  },
   "recommendations": [
     {
       "module": "<RAID|SMITH|NavBoost|Content|Trust|Domain|Technical|Entity|E-E-A-T|CWV>",
@@ -668,15 +688,43 @@ function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, target
   const paaTotal = Math.max(serpData.peopleAlsoAsk?.length || 1, 1);
   const paaCoverageScore = Math.min(1, paaAnswered / paaTotal);
 
+  // ---- Title Match score (QualityNsrNsrData.titlematchScore) ----
+  const titleMatchComputed = (() => {
+    const titleText = aiAnalysis.titleMatch?.titleText || "";
+    const kwInTitle = aiAnalysis.titleMatch?.keywordInTitle || false;
+    const kwFrontLoaded = aiAnalysis.titleMatch?.frontLoaded || false;
+    if (kwInTitle && kwFrontLoaded) return 0.95;
+    if (kwInTitle) return 0.75;
+    return aiAnalysis.titleMatch?.score || 0.4;
+  })();
+
+  // ---- Panda Risk score (CompressedQualitySignals.pandaDemotion) ----
+  const pandaRiskComputed = (() => {
+    const wordCountFactor = wordCount < 300 ? 0.2 : wordCount < 600 ? 0.4 : wordCount < 1000 ? 0.65 : 0.85;
+    const structureFactor = (listCount + tableCount + blockquoteCount) > 2 ? 0.8 : (listCount + tableCount) > 0 ? 0.5 : 0.2;
+    const depthFactor = aiAnalysis.pandaRisk?.depthScore || aiAnalysis.contentEffort?.score || 0.5;
+    return Math.min(1, wordCountFactor * 0.35 + structureFactor * 0.25 + depthFactor * 0.4);
+  })();
+
+  // ---- Chard Quality score (QualityNsrNsrData.chardEncoded) ----
+  const chardQualityComputed = (() => {
+    const originality = aiAnalysis.chardQuality?.originalityScore || aiAnalysis.informationGain?.score || 0.4;
+    const balance = aiAnalysis.chardQuality?.depthBreadthBalance || "broad-shallow";
+    const balanceScore = balance === "balanced" ? 0.9 : balance === "deep-narrow" ? 0.75 : 0.4;
+    const substantive = Math.min(1, (aiAnalysis.chardQuality?.substantiveInsights || 3) / 8);
+    return Math.min(1, originality * 0.4 + balanceScore * 0.3 + substantive * 0.3);
+  })();
+
   // ============================================
-  // BUILD THE 32 SIGNALS ARRAY
+  // BUILD THE 34 SIGNALS ARRAY
+  // Mapped to Google Content Warehouse API modules (seo-datawarehouse.com)
   // ============================================
   const signals = [
     // === TIER 1: NavBoost (10/10 impact) ===
     {
       key: "navboost_ctr", label: "NavBoost: CTR Attractiveness",
       score: aiAnalysis.navboost?.ctrAttractiveness || 0.5, weight: 0.055, category: "navboost", isNew: true,
-      dataWarehouse: "QualityNavboostCrapsCrapsClickSignals",
+      dataWarehouse: "QualityNavboostCrapsCrapsClickSignals (clicks, goodClicks, impressions)",
       topCompetitor: topCompDomain,
     },
     {
@@ -687,7 +735,7 @@ function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, target
     {
       key: "navboost_pogostick", label: "NavBoost: Pogo-Stick Risk",
       score: 1.0 - (aiAnalysis.navboost?.pogoStickRisk || 0.5), weight: 0.045, category: "navboost", isNew: true,
-      dataWarehouse: "QualityNavboostCrapsCrapsDevice",
+      dataWarehouse: "QualityNavboostCrapsCrapsClickSignals (lastLongestClicks)",
     },
 
     // === TIER 2: Quality NSR / Site Authority (10/10 impact) ===
@@ -732,12 +780,12 @@ function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, target
     {
       key: "information_gain", label: "Information Gain",
       score: aiAnalysis.informationGain?.score || 0.4, weight: 0.05, category: "content", isNew: true,
-      dataWarehouse: "QualityFringeFringeQueryPriorPerDocData",
+      dataWarehouse: "InformationGainScore (Patent US20200349181A1)",
     },
     {
-      key: "entity_salience", label: "Entity Salience",
-      score: aiAnalysis.entitySalience?.score || 0.3, weight: 0.045, category: "content", isNew: false,
-      dataWarehouse: "QualitySalientTermsDocData",
+      key: "entity_salience", label: "Entity Salience & KG Coverage",
+      score: nlpEntities ? Math.min(1, (aiAnalysis.entitySalience?.score || 0.3) * 0.6 + entityKGScore * 0.4) : (aiAnalysis.entitySalience?.score || 0.3), weight: 0.055, category: "content", isNew: false,
+      dataWarehouse: "QualitySalientTermsDocData + RepositoryWebrefAnnotatedCategoryInfo",
       topCompetitor: topCompDomain, topValue: aiAnalysis.entitySalience?.topCompetitorValue || "0.7", yourValue: aiAnalysis.entitySalience?.yourValue || "0.3",
     },
     {
@@ -824,7 +872,7 @@ function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, target
     {
       key: "content_freshness", label: "Content Freshness",
       score: aiAnalysis.contentFreshness?.score || 0.5, weight: 0.03, category: "serp", isNew: true,
-      dataWarehouse: "QualityTimebasedLastSignificantUpdate",
+      dataWarehouse: "QualityTimebasedLastSignificantUpdate + CrawlerChangerateUrlChange",
     },
 
     // === Link & Engagement Signals ===
@@ -844,11 +892,21 @@ function computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, target
       dataWarehouse: "ImageQualityNavboostImageQualityClickSignals",
     },
 
-    // === NLP Entity Signals (if available) ===
+    // === NEW v3.2: Title, Panda, Chard Quality Signals ===
     {
-      key: "entity_kg_coverage", label: "Knowledge Graph Entity Coverage",
-      score: nlpEntities ? entityKGScore : (aiAnalysis.entitySalience?.entityDepth || 0.4), weight: 0.03, category: "entity", isNew: true,
-      dataWarehouse: "RepositoryWebrefAnnotatedCategoryInfo",
+      key: "title_match", label: "Title-Query Match",
+      score: aiAnalysis.titleMatch?.score || titleMatchComputed, weight: 0.035, category: "content", isNew: true,
+      dataWarehouse: "QualityNsrNsrData (titlematchScore)",
+    },
+    {
+      key: "panda_risk", label: "Panda Thin Content Risk",
+      score: aiAnalysis.pandaRisk?.score || pandaRiskComputed, weight: 0.04, category: "content", isNew: true,
+      dataWarehouse: "CompressedQualitySignals (pandaDemotion, babyPandaV2Demotion)",
+    },
+    {
+      key: "chard_quality", label: "Content Quality (Chard Predictor)",
+      score: aiAnalysis.chardQuality?.score || chardQualityComputed, weight: 0.035, category: "content", isNew: true,
+      dataWarehouse: "QualityNsrNsrData (chardEncoded, tofu)",
     },
   ];
 
@@ -928,7 +986,7 @@ module.exports = async function handler(req, res) {
     const targetDomain = extractDomain(url);
     const effectiveKeyword = keyword || targetDomain.split(".")[0];
 
-    console.log(`[analyze v3] Starting 32-signal analysis for ${url} (keyword: "${effectiveKeyword}")`);
+    console.log(`[analyze v3.2] Starting 34-signal analysis for ${url} (keyword: "${effectiveKeyword}")`);
 
     // Step 1: Fire off parallel API calls for speed
     console.log("[analyze] Starting parallel API calls...");
@@ -960,7 +1018,7 @@ module.exports = async function handler(req, res) {
     const aiAnalysis = await analyzeContentWithAI(contentText, effectiveKeyword, serpData.organicResults, targetDomain, nlpEntities, pageSpeedData);
 
     // Step 5: Compute all 32 signals
-    console.log("[analyze] Computing 32 signals...");
+    console.log("[analyze] Computing 34 signals...");
     const { signals, v2Composite, wordCount } = computeSignals(scrapedData, serpData, aiAnalysis, domainMetrics, targetDomain, pageSpeedData, nlpEntities);
 
     // Step 6: Build competitors
@@ -1022,7 +1080,7 @@ module.exports = async function handler(req, res) {
       url,
       keyword: effectiveKeyword,
       analyzedAt: new Date().toISOString(),
-      version: "3.1",
+      version: "3.2",
       passed: v2Composite >= 0.6,
       v2Composite: parseFloat(v2Composite.toFixed(4)),
       v1Composite: parseFloat((v2Composite * 0.9).toFixed(4)),
@@ -1055,10 +1113,13 @@ module.exports = async function handler(req, res) {
       eeat: aiAnalysis.eeatSignals || null,
       informationGain: aiAnalysis.informationGain || null,
       contentFreshness: aiAnalysis.contentFreshness || null,
+      titleMatch: aiAnalysis.titleMatch || null,
+      pandaRisk: aiAnalysis.pandaRisk || null,
+      chardQuality: aiAnalysis.chardQuality || null,
       serpFeatures: serpData.serpFeatures || [],
     };
 
-    console.log(`[analyze v3.1] Complete! Score: ${(v2Composite * 100).toFixed(1)}/100, Signals: ${signals.length}, Real Rank: ${realGoogleRank || "N/A"}`);
+    console.log(`[analyze v3.2] Complete! Score: ${(v2Composite * 100).toFixed(1)}/100, Signals: ${signals.length}, Real Rank: ${realGoogleRank || "N/A"}`);
 
     return res.status(200).json(result);
   } catch (err) {
