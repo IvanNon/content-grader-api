@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+  <title>Content Grader — See What Google Sees</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js" crossorigin></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-is/18.3.1/umd/react-is.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/recharts@2.15.2/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/lucide@0.453.0/dist/umd/lucide.js"></script>
+  <script>
+  // Shim: create LucideReact components from lucide base SVG data
+  (function() {
+    function createIcon(iconData) {
+      return React.forwardRef(function(props, ref) {
+        var size = props.size || 24;
+        var color = props.color || 'currentColor';
+        var sw = props.strokeWidth || 2;
+        var rest = {};
+        Object.keys(props).forEach(function(k) {
+          if (k !== 'size' && k !== 'color' && k !== 'strokeWidth' && k !== 'children') rest[k] = props[k];
+        });
+        var svgProps = Object.assign({}, {
+          xmlns: 'http://www.w3.org/2000/svg', width: size, height: size,
+          viewBox: '0 0 24 24', fill: 'none', stroke: color,
+          strokeWidth: sw, strokeLinecap: 'round', strokeLinejoin: 'round', ref: ref
+        }, rest);
+        function toEl(c) {
+          if (!Array.isArray(c)) return c;
+          var a = c[1] || {}, ra = {};
+          Object.keys(a).forEach(function(k) {
+            ra[k.replace(/-([a-z])/g, function(m,l){ return l.toUpperCase(); })] = a[k];
+          });
+          return React.createElement(c[0], ra);
+        }
+        var ch = iconData[2] ? iconData[2].map(toEl) : [];
+        return React.createElement.apply(React, ['svg', svgProps].concat(ch));
+      });
+    }
+    window.LucideReact = {};
+    var names = ['ArrowRight','Upload','Link2','FileText','X','Search','Mail','BarChart3','Download','Share2','AlertTriangle','CheckCircle2','XCircle','Minus','ChevronDown','ChevronUp','TrendingUp','TrendingDown','Target','Zap','Layers','MousePointerClick','BookOpen','Shield','Eye','Check','ExternalLink','Loader2','ArrowUpRight','ToggleLeft','ToggleRight','Lock','RefreshCw','Copy','ArrowLeft','Play','Pause','Settings','Edit3'];
+    names.forEach(function(n) { if (window.lucide[n]) window.LucideReact[n] = createIcon(window.lucide[n]); });
+  })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+    const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } = Recharts;
+    const {
+      ArrowRight, Upload, Link2, FileText, X, Search, Mail, BarChart3,
+      Download, Share2, AlertTriangle, CheckCircle2, XCircle, Minus,
+      ChevronDown, ChevronUp, TrendingUp, TrendingDown, Target, Zap,
+      Layers, MousePointerClick, BookOpen, Shield, Eye, Check,
+      ExternalLink, Loader2, ArrowUpRight, ToggleLeft, ToggleRight, Lock,
+      RefreshCw, Copy, ArrowLeft, Play, Pause, Settings, Edit3,
+    } = LucideReact;
+
+
+// ============================================================================
+// DEMO DATA
+// ============================================================================
+
+const DEMO_DATA = {
+  url: "https://bettersleep.com/blog/best-sleep-position",
+  keyword: "best sleep position",
+  analyzedAt: "2026-03-26T04:20:00Z",
+  version: "2.0",
+  passed: false,
+  v2Composite: 0.4936,
+  v1Composite: 0.4461,
+  compositeDelta: 0.0475,
+  predictedRank: 15,
+  totalCompetitors: 15,
+  wordCount: 7185,
+  signals: [
+    { key: "site_authority", label: "Site Authority", score: 0.21, weight: 0.09, impact: 0.083, category: "authority", status: "weak", isNew: false, topCompetitor: "youtube.com", topValue: "952", yourValue: "200" },
+    { key: "entity_salience", label: "Entity Salience", score: 0.256, weight: 0.09, impact: 0.077, category: "content", status: "weak", isNew: false, topCompetitor: "stvincents.org", topValue: "0.774", yourValue: "0.405" },
+    { key: "ai_detection", label: "AI Detection", score: 0.0, weight: 0.038, impact: 0.066, category: "trust", status: "weak", isNew: false, topCompetitor: "health.harvard.edu", topValue: "Low risk", yourValue: "High risk" },
+    { key: "pagerank0", label: "PageRank", score: 0.3, weight: 0.06, impact: 0.048, category: "authority", status: "weak", isNew: false, topCompetitor: "youtube.com", topValue: "1.0", yourValue: "0.3" },
+    { key: "nsr", label: "NSR (Keyword Diversity)", score: 0.04, weight: 0.038, impact: 0.043, category: "authority", status: "weak", isNew: false, topCompetitor: "nm.org", topValue: "1.0", yourValue: "0.04" },
+    { key: "content_effort", label: "Content Effort", score: 0.644, weight: 0.113, impact: 0.039, category: "content", status: "moderate", isNew: false, topCompetitor: "nm.org", topValue: "0.835", yourValue: "0.644" },
+    { key: "internal_links", label: "Internal Links", score: 0.167, weight: 0.038, impact: 0.037, category: "engagement", status: "weak", isNew: false, topCompetitor: "stvincents.org", topValue: "9 links", yourValue: "4 links" },
+    { key: "image_count", label: "Image Count", score: 0.0, weight: 0.03, impact: 0.036, category: "engagement", status: "weak", isNew: false, topCompetitor: "stvincents.org", topValue: "5 images", yourValue: "1 image" },
+    { key: "table_count", label: "Table Count", score: 0.0, weight: 0.023, impact: 0.027, category: "engagement", status: "weak", isNew: false, topCompetitor: "stvincents.org", topValue: "3 tables", yourValue: "0 tables" },
+    { key: "navboost_proxy", label: "NavBoost CTR", score: 0.664, weight: 0.10, impact: 0.024, category: "v2", status: "moderate", isNew: true },
+    { key: "smith_composite", label: "SMITH Sections", score: 0.574, weight: 0.08, impact: 0.026, category: "v2", status: "moderate", isNew: true },
+    { key: "snippet_match", label: "Snippet Match", score: 0.5, weight: 0.038, impact: 0.020, category: "serp", status: "moderate", isNew: false },
+    { key: "intent_alignment", label: "RAID Intent", score: 0.666, weight: 0.07, impact: 0.016, category: "v2", status: "moderate", isNew: true },
+    { key: "readability_grade", label: "Readability", score: 0.9, weight: 0.038, impact: 0, category: "content", status: "strong", isNew: false },
+    { key: "heading_depth", label: "Heading Depth", score: 1.0, weight: 0.023, impact: 0, category: "content", status: "strong", isNew: false },
+    { key: "citation_count", label: "Citation Count", score: 1.0, weight: 0.075, impact: 0, category: "trust", status: "strong", isNew: false },
+    { key: "expert_quotes", label: "Expert Quotes", score: 1.0, weight: 0.038, impact: 0, category: "trust", status: "strong", isNew: false },
+    { key: "external_links", label: "External Links", score: 1.0, weight: 0.023, impact: 0, category: "engagement", status: "strong", isNew: false },
+  ],
+  competitors: [
+    { domain: "stvincents.org", rankActual: 1, compositeScore: 0.857 },
+    { domain: "nm.org", rankActual: 2, compositeScore: 0.840 },
+    { domain: "hopkinsmedicine.org", rankActual: 3, compositeScore: 0.838 },
+    { domain: "youtube.com", rankActual: 4, compositeScore: 0.804 },
+    { domain: "houstonmethodist.org", rankActual: 6, compositeScore: 0.583 },
+    { domain: "healthline.com", rankActual: 11, compositeScore: 0.581 },
+    { domain: "aarp.org", rankActual: 9, compositeScore: 0.562 },
+    { domain: "sleepfoundation.org", rankActual: 7, compositeScore: 0.529 },
+    { domain: "bbc.com", rankActual: 15, compositeScore: 0.515 },
+    { domain: "today.com", rankActual: 17, compositeScore: 0.480 },
+    { domain: "clevelandclinic.org", rankActual: 12, compositeScore: 0.478 },
+    { domain: "henryford.com", rankActual: 10, compositeScore: 0.477 },
+    { domain: "mayoclinic.org", rankActual: 8, compositeScore: 0.472 },
+    { domain: "bettersleep.com", rankActual: 0, compositeScore: 0.446 },
+  ],
+  navboost: {
+    ctrAttractiveness: 1.0,
+    satisfactionScore: 0.49,
+    pogoStickRisk: 0.10,
+    lastLongestProbability: 0.335,
+    composite: 0.664,
+  },
+  smith: {
+    sectionCount: 12,
+    pageComposite: 0.574,
+    smithPenalty: 0.173,
+    weakestSection: { title: "Medical Disclaimer", score: 0.402, issues: ["Thin section (73 words)"] },
+    strongestSection: { title: "The 4 Main Sleeping Positions: Complete Analysis", score: 0.949 },
+    sectionVariance: 0.025,
+    sections: [
+      { title: "Introduction", composite: 0.778, wordCount: 553, issues: [] },
+      { title: "Understanding Sleep Positions: Why They Matter", composite: 0.863, wordCount: 551, issues: [] },
+      { title: "The 4 Main Sleeping Positions: Complete Analysis", composite: 0.949, wordCount: 1233, issues: [] },
+      { title: "Best Sleeping Positions for Specific Health Conditions", composite: 0.917, wordCount: 1167, issues: [] },
+      { title: "Sleeping Positions During Pregnancy", composite: 0.847, wordCount: 809, issues: [] },
+      { title: "How Sleeping Position Affects Your Health", composite: 0.873, wordCount: 786, issues: [] },
+      { title: "Choosing the Right Pillow for Your Sleeping Position", composite: 0.723, wordCount: 616, issues: ["No supporting evidence"] },
+      { title: "How to Choose Your Best Sleeping Position", composite: 0.719, wordCount: 540, issues: ["No supporting evidence"] },
+      { title: "How to Successfully Change Your Sleeping Position", composite: 0.752, wordCount: 380, issues: [] },
+      { title: "Frequently Asked Questions", composite: 0.645, wordCount: 273, issues: [] },
+      { title: "Conclusion", composite: 0.497, wordCount: 104, issues: ["No supporting evidence"] },
+      { title: "Medical Disclaimer", composite: 0.402, wordCount: 73, issues: ["Thin section (73 words)"] },
+    ],
+  },
+  raid: {
+    query: "best sleep position",
+    classifiedIntent: "Commercial Investigation",
+    classifiedStage: "Decision",
+    reasonScore: 0.85,
+    authorityScore: 0.749,
+    intentScore: 0.45,
+    directionScore: 0.63,
+    composite: 0.666,
+    recommendations: [
+      "Content format doesn't match commercial investigation intent — add comparison table with ratings",
+    ],
+  },
+  recommendations: [
+    { module: "RAID", priority: "HIGH", action: "Add a sleep position comparison table with ratings", fix: "Create a comparison table rating each sleep position on comfort, health benefits, pain relief, and recommended conditions. Users searching 'best sleep position' expect a clear ranking — the article reads as informational but the intent is commercial investigation.", expectedImpact: "+0.025 composite" },
+    { module: "SMITH", priority: "HIGH", action: "Fix the Medical Disclaimer section", fix: "The Medical Disclaimer is only 73 words and scores 0.40 — the weakest section on the page. This creates a SMITH penalty of -0.173 that drags the entire page down. Either expand to 200+ words with specific guidance, or merge into the Conclusion.", expectedImpact: "+0.014 composite" },
+    { module: "Content", priority: "HIGH", action: "Increase entity salience for 'sleep position'", fix: "Use 'sleep position' and 'sleeping position' more prominently in opening paragraphs, H2 headings, and topic sentences. The primary entity salience is 0.256 — well below the top competitor at 0.774. Google's QualitySalientTerms module weights heading placement heavily.", expectedImpact: "+0.020 composite" },
+    { module: "Content", priority: "HIGH", action: "Add 3-5 original images", fix: "Add position diagrams, infographics, or comparison visuals. Currently zero images detected in the content body. The top competitor (stvincents.org) has 5 images. Google's contentEffort signal correlates with original visual content.", expectedImpact: "+0.012 composite" },
+    { module: "NavBoost", priority: "MEDIUM", action: "Improve satisfaction and dwell time signals", fix: "Add interactive elements (comparison tools, quizzes), visual guides, and scannable summaries. The satisfaction score is 0.49 and last-longest click probability is only 0.34 — users would keep searching after this page.", expectedImpact: "+0.010 composite" },
+    { module: "SMITH", priority: "MEDIUM", action: "Expand the Conclusion section", fix: "The Conclusion is only 104 words and scores 0.50. Expand to 300+ words with a clear 'which position is right for you' decision framework and supporting evidence. This also reduces the SMITH section variance penalty.", expectedImpact: "+0.008 composite" },
+    { module: "Content", priority: "MEDIUM", action: "Add 5+ more internal links", fix: "Link to related BetterSleep articles: mattress guides, pillow reviews, sleep hygiene tips. Currently 4 internal links vs. the top competitor's 9. Internal link topology is a PerDocData signal.", expectedImpact: "+0.008 composite" },
+    { module: "Content", priority: "MEDIUM", action: "Strengthen the FAQ section", fix: "Expand from 273 words. Add the 'People Also Ask' questions Google shows for this keyword: 'What is the 10 5 3 2 1 rule for sleep?' and 'What is the best position to sleep in with osteoporosis?' — both are currently unanswered.", expectedImpact: "+0.006 composite" },
+    { module: "Trust", priority: "MEDIUM", action: "Reduce AI detection risk", fix: "Add more sentence length variation (burstiness), domain-specific medical vocabulary, and personal/experiential language. The current content patterns suggest uniform AI generation. Google's GibberishScore and spambrainLavcScore penalize this.", expectedImpact: "+0.010 composite" },
+    { module: "Domain", priority: "LOW", action: "Build site authority (long-term)", fix: "The top 3 competitors are hospital systems with 4-5x BetterSleep's domain authority. This is the single largest gap (impact: 0.083) but requires sustained link building, PR, and content marketing over months.", expectedImpact: "+0.083 composite (long-term)" },
+  ],
+  peopleAlsoAsk: [
+    { question: "What is the healthiest position to sleep in?", answered: true },
+    { question: "What is the 10 5 3 2 1 rule for sleep?", answered: false },
+    { question: "How to sleep for good blood circulation?", answered: true },
+    { question: "What is the best position to sleep in with osteoporosis?", answered: false },
+  ],
+};
+
+const ANALYSIS_STEPS = [
+  "Fetching page content",
+  "Extracting main content body",
+  "Computing entity salience scores",
+  "Evaluating E-E-A-T trust signals",
+  "Checking content effort indicators",
+  "Running GibberishScore detection",
+  "Analyzing link topology",
+  "Running NavBoost CTR estimation",
+  "Scoring SMITH section quality",
+  "Evaluating RAID intent alignment",
+  "Building competitive landscape",
+  "Scoring against SQEG criteria",
+  "Compiling v2.0 results",
+];
+
+// ============================================================================
+// UTILITY COMPONENTS (exact original patterns)
+// ============================================================================
+
+function AnimatedNumber({ target, decimals = 0, duration = 1200, suffix = "" }) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    let frames = 60;
+    let frame = 0;
+    const interval = setInterval(() => {
+      frame++;
+      const progress = frame / frames;
+      setValue(Math.floor(target * progress));
+      if (frame >= frames) {
+        setValue(target);
+        clearInterval(interval);
+      }
+    }, duration / frames);
+    return () => clearInterval(interval);
+  }, [target, duration]);
+  return value.toFixed(decimals) + suffix;
+}
+
+function ScoreBar({ score, showLabel = true }) {
+  let color = "#000";
+  if (score >= 0.7) color = "#000";
+  else if (score >= 0.4) color = "rgba(0,0,0,0.5)";
+  else color = "rgba(0,0,0,0.2)";
+  return (
+    <>
+      <div style={{ width: "100%", height: 3, background: "rgba(0,0,0,0.1)", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{ width: `${score * 100}%`, height: "100%", background: color, transition: "width 0.3s" }} />
+      </div>
+      {showLabel && <div className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.4)", marginTop: 4 }}>{(score * 100).toFixed(0)}</div>}
+    </>
+  );
+}
+
+function CategoryLabel({ category }) {
+  const colors = {
+    authority: "#000",
+    content: "rgba(0,0,0,0.6)",
+    trust: "rgba(0,0,0,0.8)",
+    engagement: "rgba(0,0,0,0.5)",
+    serp: "rgba(0,0,0,0.7)",
+    v2: "#000",
+  };
+  return <span className="font-mono" style={{ fontSize: 8, letterSpacing: "0.2em", textTransform: "uppercase", padding: "2px 6px", background: colors[category] || "#000", color: "#fff" }}>{category}</span>;
+}
+
+function StatusBadge({ status }) {
+  const styles = {
+    strong: { bg: "#000", fg: "#fff", label: "Strong" },
+    moderate: { bg: "rgba(0,0,0,0.3)", fg: "#fff", label: "Moderate" },
+    weak: { bg: "rgba(0,0,0,0.1)", fg: "#000", label: "Weak" },
+  };
+  const s = styles[status] || styles.weak;
+  return <span className="font-mono" style={{ fontSize: 8, letterSpacing: "0.15em", textTransform: "uppercase", padding: "2px 4px", background: s.bg, color: s.fg, marginTop: 4 }}>{s.label}</span>;
+}
+
+function PriorityBadge({ priority }) {
+  const colors = { HIGH: "#000", MEDIUM: "rgba(0,0,0,0.4)", LOW: "rgba(0,0,0,0.15)" };
+  return <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", padding: "3px 8px", background: colors[priority], color: priority === "HIGH" ? "#fff" : "#000", fontWeight: 600 }}>{priority}</span>;
+}
+
+function ModuleIcon({ module }) {
+  const icons = {
+    RAID: Target,
+    SMITH: Layers,
+    NavBoost: Zap,
+    Content: FileText,
+    Trust: Shield,
+    Domain: Link2,
+  };
+  const Icon = icons[module] || FileText;
+  return <Icon size={18} />;
+}
+
+// ============================================================================
+// COMPONENTS: Home, Loading, EmailGate (exact original)
+// ============================================================================
+
+function HomeView({ onAnalyze }) {
+  const [url, setUrl] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = () => {
+    if (!url.trim() || !keyword.trim()) return;
+    setLoading(true);
+    onAnalyze(url, keyword);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <header style={{ borderBottom: "1px solid #000" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px" }}>
+          <button className="font-mono" style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, background: "none", border: "none", cursor: "pointer" }}>Content Grader</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Shadow SERP v2.0</span>
+          </div>
+        </div>
+      </header>
+      <main style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: "100%", maxWidth: 480, padding: "2rem" }}>
+          <h1 style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em", marginBottom: 12, lineHeight: 1.2 }}>See What Google Sees</h1>
+          <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", marginBottom: 48, lineHeight: 1.6 }}>Analyze your content against 18 signals from Google's v2.0 ranking system. Get specific recommendations to improve your ranking.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 32 }}>
+            <div>
+              <label className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.5)", display: "block", marginBottom: 8 }}>Page URL</label>
+              <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/page" style={{ width: "100%", padding: "12px 16px", border: "1px solid #000", fontSize: 14, fontFamily: "inherit" }} />
+            </div>
+            <div>
+              <label className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.5)", display: "block", marginBottom: 8 }}>Target Keyword</label>
+              <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="e.g., best sleep position" style={{ width: "100%", padding: "12px 16px", border: "1px solid #000", fontSize: 14, fontFamily: "inherit" }} />
+            </div>
+          </div>
+          <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "14px 16px", background: "#000", color: "#fff", border: "none", fontSize: 14, fontWeight: 600, cursor: loading ? "default" : "pointer", opacity: loading ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {loading ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}
+            {loading ? "Analyzing..." : "Analyze Page"}
+          </button>
+          <p className="font-mono" style={{ fontSize: 10, color: "rgba(0,0,0,0.3)", marginTop: 24, lineHeight: 1.6 }}>By clicking Analyze, you agree to submit your page content for analysis. Your data is processed securely and retained for 30 days.</p>
+        </div>
+      </main>
+      <footer style={{ borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+        <div className="container" style={{ padding: "16px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Content Grader by Autoresearch</span>
+        </div>
+      </footer>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function LoadingView({ url, apiReady, apiError, onComplete }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setStep(s => s + 1), 300);
+    return () => clearInterval(interval);
+  }, []);
+  useEffect(() => {
+    if (apiReady && step >= ANALYSIS_STEPS.length) {
+      setTimeout(() => onComplete(), 500);
+    }
+  }, [apiReady, step, onComplete]);
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <header style={{ borderBottom: "1px solid #000" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px" }}>
+          <button className="font-mono" style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, background: "none", border: "none", cursor: "pointer" }}>Content Grader</button>
+        </div>
+      </header>
+      <main style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: "100%", maxWidth: 480, padding: "2rem" }}>
+          {apiError ? (
+            <>
+              <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>Analysis Failed</h2>
+              <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", lineHeight: 1.6 }}>{apiError}</p>
+            </>
+          ) : (
+            <>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 24 }}>Analyzing Content</p>
+              <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", marginBottom: 32, wordBreak: "break-word" }}>{url}</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {ANALYSIS_STEPS.map((s, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, opacity: i < step ? 1 : 0.3, transition: "opacity 0.3s" }}>
+                    {i < step ? <Check size={16} /> : <Minus size={16} />}
+                    <span className="font-mono" style={{ fontSize: 11 }}>{s}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function EmailGateView({ url, onSubmit }) {
+  const [email, setEmail] = useState("");
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <header style={{ borderBottom: "1px solid #000" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px" }}>
+          <button className="font-mono" style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, background: "none", border: "none", cursor: "pointer" }}>Content Grader</button>
+        </div>
+      </header>
+      <main style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: "100%", maxWidth: 480, padding: "2rem" }}>
+          <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>See your report</h2>
+          <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", marginBottom: 32, lineHeight: 1.6 }}>Get a detailed breakdown of your content's strength and specific actions to improve ranking.</p>
+          <div style={{ marginBottom: 24 }}>
+            <label className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.5)", display: "block", marginBottom: 8 }}>Email (optional)</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="your@email.com" style={{ width: "100%", padding: "12px 16px", border: "1px solid #000", fontSize: 14, fontFamily: "inherit" }} />
+          </div>
+          <button onClick={onSubmit} style={{ width: "100%", padding: "14px 16px", background: "#000", color: "#fff", border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Mail size={16} /> View Full Report
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// ============================================================================
+// COMPONENTS: Deep dives and sections
+// ============================================================================
+
+function NavBoostPanel({ data }) {
+  return (
+    <div style={{ border: "1px solid #000", padding: 32, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <div style={{ color: "rgba(0,0,0,0.4)" }}><Zap size={20} /></div>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>NavBoost Proxy (CTR Model)</h3>
+          <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Click-Through Rate Attractiveness</p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 32, marginBottom: 24 }}>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>CTR Attractiveness</div>
+          <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>{(data.navboost.ctrAttractiveness * 100).toFixed(0)}</div>
+          <ScoreBar score={data.navboost.ctrAttractiveness} showLabel={false} />
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Satisfaction Score</div>
+          <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>{(data.navboost.satisfactionScore * 100).toFixed(0)}</div>
+          <ScoreBar score={data.navboost.satisfactionScore} showLabel={false} />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+        <div>
+          <div className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 4 }}>Pogo Stick Risk</div>
+          <div className="font-mono" style={{ fontSize: 14, fontWeight: 700 }}>{(data.navboost.pogoStickRisk * 100).toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 4 }}>Last Longest Click</div>
+          <div className="font-mono" style={{ fontSize: 14, fontWeight: 700 }}>{(data.navboost.lastLongestProbability * 100).toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 4 }}>Composite</div>
+          <div className="font-mono" style={{ fontSize: 14, fontWeight: 700 }}>{(data.navboost.composite * 100).toFixed(0)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SmithPanel({ data }) {
+  return (
+    <div style={{ border: "1px solid #000", padding: 32, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <div style={{ color: "rgba(0,0,0,0.4)" }}><Layers size={20} /></div>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>SMITH — Section Quality Evaluation</h3>
+          <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Subsection Metrics &amp; Holistic Targeting</p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Page Composite</div>
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>{(data.smith.pageComposite * 100).toFixed(0)}</div>
+          <ScoreBar score={data.smith.pageComposite} showLabel={false} />
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Sections</div>
+          <div style={{ fontSize: 28, fontWeight: 700 }}>{data.smith.sectionCount}</div>
+          <div className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.4)", marginTop: 8 }}>total</div>
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>SMITH Penalty</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: "#c00" }}>−{(data.smith.smithPenalty * 100).toFixed(1)}</div>
+          <div className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.4)", marginTop: 8 }}>composite</div>
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Variance</div>
+          <div className="font-mono" style={{ fontSize: 28, fontWeight: 700 }}>{(data.smith.sectionVariance * 100).toFixed(2)}</div>
+          <div className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.4)", marginTop: 8 }}>penalty</div>
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid rgba(0,0,0,0.1)", paddingTop: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+        <div>
+          <div className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 12 }}>Strongest</div>
+          <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{data.smith.strongestSection.title}</h4>
+          <div className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>{(data.smith.strongestSection.score * 100).toFixed(0)}</div>
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 12 }}>Weakest</div>
+          <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{data.smith.weakestSection.title}</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>{(data.smith.weakestSection.score * 100).toFixed(0)}</div>
+            <div className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.4)" }}>{data.smith.weakestSection.issues[0]}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RaidPanel({ data }) {
+  return (
+    <div style={{ border: "1px solid #000", padding: 32, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        <div style={{ color: "rgba(0,0,0,0.4)" }}><Target size={20} /></div>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>RAID — Intent Alignment</h3>
+          <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Reason • Authority • Intent • Direction</p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Reason</div>
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>{(data.raid.reasonScore * 100).toFixed(0)}</div>
+          <ScoreBar score={data.raid.reasonScore} showLabel={false} />
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Authority</div>
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>{(data.raid.authorityScore * 100).toFixed(0)}</div>
+          <ScoreBar score={data.raid.authorityScore} showLabel={false} />
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Intent</div>
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>{(data.raid.intentScore * 100).toFixed(0)}</div>
+          <ScoreBar score={data.raid.intentScore} showLabel={false} />
+        </div>
+        <div>
+          <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>Direction</div>
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>{(data.raid.directionScore * 100).toFixed(0)}</div>
+          <ScoreBar score={data.raid.directionScore} showLabel={false} />
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid rgba(0,0,0,0.1)", paddingTop: 24 }}>
+        <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 12 }}>Query Classification</div>
+        <div style={{ marginBottom: 16 }}>
+          <div className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>Intent: {data.raid.classifiedIntent}</div>
+          <div className="font-mono" style={{ fontSize: 12, fontWeight: 700 }}>Stage: {data.raid.classifiedStage}</div>
+        </div>
+        {data.raid.recommendations.map((rec, i) => (
+          <div key={i} style={{ fontSize: 13, color: "rgba(0,0,0,0.6)", lineHeight: 1.6 }}>• {rec}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BeforeAfterSimulation({ data }) {
+  return (
+    <section style={{ borderBottom: "1px solid #000" }}>
+      <div className="container" style={{ padding: "48px 16px" }}>
+        <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 32 }}>If You Implemented All HIGH Priority Recommendations</p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "center" }}>
+          <div>
+            <p className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 12 }}>Current</p>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 64, fontWeight: 700, lineHeight: 1 }}>{(data.v2Composite * 100).toFixed(0)}</div>
+              <div style={{ fontSize: 16, color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>/100</div>
+            </div>
+            <p className="font-mono" style={{ fontSize: 11, color: "rgba(0,0,0,0.5)", lineHeight: 1.6 }}>This page ranks ~#{data.predictedRank} against {data.totalCompetitors} competitors</p>
+          </div>
+          <div>
+            <p className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 12 }}>With Changes (Projected)</p>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 64, fontWeight: 700, lineHeight: 1, color: "#008000" }}>{((data.v2Composite + 0.09) * 100).toFixed(0)}</div>
+              <div style={{ fontSize: 16, color: "rgba(0,0,0,0.4)", marginBottom: 8 }}>/100</div>
+            </div>
+            <p className="font-mono" style={{ fontSize: 11, color: "rgba(0,0,0,0.5)", lineHeight: 1.6 }}>Estimated rank: ~#8 (a move up {data.predictedRank - 8} positions)</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WaitlistCTA() {
+  return (
+    <section style={{ borderBottom: "1px solid #000", background: "rgba(0,0,0,0.02)" }}>
+      <div className="container" style={{ padding: "64px 16px", textAlign: "center", maxWidth: 640, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 16, letterSpacing: "-0.01em" }}>Ready to optimize?</h2>
+        <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", marginBottom: 32, lineHeight: 1.6 }}>Use the Content Editor below to run an automated 3-round optimization loop. Each round refines your content based on the signals above.</p>
+        <button style={{ padding: "14px 32px", background: "#000", color: "#fff", border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Open Content Editor</button>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// VIEW: REPORT (modified with editor button)
+// ============================================================================
+
+function ReportView({ data, onBack, onOpenEditor }) {
+  const [signalFilter, setSignalFilter] = useState("all");
+
+  const filteredSignals = signalFilter === "all" ? data.signals : data.signals.filter(s => s.category === signalFilter);
+
+  const categories = [
+    { key: "all", label: "All" },
+    { key: "authority", label: "Authority" },
+    { key: "content", label: "Content" },
+    { key: "trust", label: "Trust" },
+    { key: "engagement", label: "Engagement" },
+    { key: "serp", label: "SERP" },
+    { key: "v2", label: "v2.0" },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      {/* Header */}
+      <header style={{ borderBottom: "1px solid #000" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px" }}>
+          <button onClick={onBack} className="font-mono" style={{ fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700, background: "none", border: "none", cursor: "pointer" }}>Content Grader</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Shadow SERP v{data.version}</span>
+            <button style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", border: "1px solid #000", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", background: "#fff", cursor: "pointer" }}>
+              <Share2 size={12} /> Share
+            </button>
+            <button style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", border: "1px solid #000", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", background: "#fff", cursor: "pointer" }}>
+              <Download size={12} /> PDF
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main style={{ flex: 1 }}>
+        {/* SECTION 1: Score Hero */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "clamp(48px, 6vw, 80px) 16px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 32 }}>
+              <div>
+                <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 16 }}>Shadow SERP v2.0 Analysis</p>
+                <p className="font-mono" style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 480 }}>{data.url}</p>
+                <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)", marginBottom: 24 }}>Keyword: "{data.keyword}"</p>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 8 }}>
+                  <div className="font-mono" style={{ fontSize: 100, fontWeight: 700, lineHeight: 1, letterSpacing: "-0.04em" }}>
+                    <AnimatedNumber target={Math.round(data.v2Composite * 100)} />
+                  </div>
+                  <div style={{ paddingBottom: 12 }}>
+                    <span className="font-mono" style={{ fontSize: 25, color: "rgba(0,0,0,0.2)", fontWeight: 700 }}>/100</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", padding: "4px 8px", background: data.passed ? "rgba(0,0,0,0.05)" : "#000", color: data.passed ? "rgba(0,0,0,0.6)" : "#fff" }}>{data.passed ? "Pass" : "Needs Work"}</span>
+                  <span className="font-mono" style={{ fontSize: 12, color: "rgba(0,0,0,0.4)" }}>
+                    v1 was {(data.v1Composite * 100).toFixed(0)} → <span style={{ color: "#000", fontWeight: 500 }}>v2: {(data.v2Composite * 100).toFixed(0)}</span> ({data.compositeDelta >= 0 ? "+" : ""}{(data.compositeDelta * 100).toFixed(1)})
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "clamp(24px, 4vw, 40px)" }}>
+                {[
+                  { label: "Predicted Rank", value: `#${data.predictedRank}`, sub: `of ${data.totalCompetitors}` },
+                  { label: "Words", value: data.wordCount.toLocaleString(), sub: "" },
+                  { label: "Signals", value: data.signals.length.toString(), sub: "3 new in v2" },
+                  { label: "Issues", value: data.recommendations.filter(r => r.priority === "HIGH").length.toString(), sub: "high priority" },
+                ].map(stat => (
+                  <div key={stat.label}>
+                    <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 4 }}>{stat.label}</div>
+                    <div className="font-mono" style={{ fontSize: 24, fontWeight: 700 }}>{stat.value}</div>
+                    {stat.sub && <div className="font-mono" style={{ fontSize: 10, color: "rgba(0,0,0,0.3)" }}>{stat.sub}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* NEW: Content Editor Button */}
+            <div style={{ marginTop: 32, paddingTop: 32, borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+              <button onClick={onOpenEditor} style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", border: "1px solid #000", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", background: "#000", color: "#fff", cursor: "pointer", fontWeight: 600 }}>
+                <Edit3 size={14} /> Open Content Editor
+              </button>
+              <p className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.3)", marginTop: 12 }}>Run an automated 3-round optimization loop to improve your content</p>
+            </div>
+          </div>
+        </section>
+
+        {/* SECTION 2: Competitive Landscape */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "48px 16px" }}>
+            <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 32 }}>Competitive Landscape — "{data.keyword}"</p>
+            <div style={{ border: "1px solid #000" }}>
+              <div style={{ display: "flex", alignItems: "center", padding: "12px 24px", borderBottom: "1px solid #000", background: "rgba(0,0,0,0.02)" }}>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", width: 40 }}>#</span>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", flex: 1 }}>Domain</span>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", width: 192 }}>Score</span>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", width: 64, textAlign: "right" }}>Score</span>
+              </div>
+              {data.competitors.map((comp, i) => {
+                const targetDomain = data.url.replace(/^https?:\/\//, "").replace(/\/.*/, "").replace("www.", "");
+                const isTarget = comp.domain === targetDomain;
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", padding: "12px 24px", borderBottom: i < data.competitors.length - 1 ? "1px solid rgba(0,0,0,0.1)" : "none", background: isTarget ? "rgba(0,0,0,0.04)" : "transparent" }}>
+                    <span className="font-mono" style={{ fontSize: 12, width: 40, fontWeight: isTarget ? 700 : 400, color: isTarget ? "#000" : "rgba(0,0,0,0.4)" }}>{i + 1}</span>
+                    <span style={{ flex: 1, fontSize: 14, fontWeight: isTarget ? 700 : 400 }}>
+                      {comp.domain}
+                      {isTarget && <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginLeft: 8, background: "#000", color: "#fff", padding: "2px 6px" }}>You</span>}
+                    </span>
+                    <div style={{ width: 192 }}><ScoreBar score={comp.compositeScore} showLabel={false} /></div>
+                    <span className="font-mono" style={{ fontSize: 14, width: 64, textAlign: "right", fontWeight: isTarget ? 700 : 400 }}>{(comp.compositeScore * 100).toFixed(0)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="font-mono" style={{ fontSize: 10, color: "rgba(0,0,0,0.3)", marginTop: 16, lineHeight: 1.6, maxWidth: 640 }}>Scores are computed using {data.signals.length} weighted signals. Rankings are based on composite score, not actual Google position.</p>
+          </div>
+        </section>
+
+        {/* SECTION 3: All 18 Signals */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "48px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>All {data.signals.length} Signals — Sorted by Impact</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, background: "#000", display: "inline-block" }} /> Strong</span>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, background: "rgba(0,0,0,0.5)", display: "inline-block" }} /> Moderate</span>
+                <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, background: "rgba(0,0,0,0.2)", display: "inline-block" }} /> Weak</span>
+              </div>
+            </div>
+
+            {/* Filter tabs */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 24, flexWrap: "wrap" }}>
+              {categories.map(cat => (
+                <button key={cat.key} onClick={() => setSignalFilter(cat.key)} className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", padding: "8px 16px", border: "1px solid #000", marginLeft: cat.key !== "all" ? -1 : 0, background: signalFilter === cat.key ? "#000" : "#fff", color: signalFilter === cat.key ? "#fff" : "#000", cursor: "pointer" }}>
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", border: "1px solid #000" }}>
+              {filteredSignals.map((signal) => (
+                <div key={signal.key} style={{ borderBottom: "1px solid rgba(0,0,0,0.2)", borderRight: "1px solid rgba(0,0,0,0.2)", padding: 20 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <CategoryLabel category={signal.category} />
+                        {signal.isNew && <span className="font-mono" style={{ fontSize: 8, letterSpacing: "0.2em", textTransform: "uppercase", background: "#000", color: "#fff", padding: "2px 4px" }}>New</span>}
+                      </div>
+                      <h4 style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" }}>{signal.label}</h4>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div className="font-mono" style={{ fontSize: 24, fontWeight: 700, lineHeight: 1 }}>{(signal.score * 100).toFixed(0)}</div>
+                      <StatusBadge status={signal.status} />
+                    </div>
+                  </div>
+                  <ScoreBar score={signal.score} showLabel={false} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                    <span className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.3)" }}>Weight: {(signal.weight * 100).toFixed(1)}%</span>
+                    {signal.impact > 0 && <span className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.5)" }}>Impact: {(signal.impact * 100).toFixed(1)}</span>}
+                  </div>
+                  {signal.topCompetitor && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.3)" }}>Top: {signal.topCompetitor}</span>
+                        <span className="font-mono" style={{ fontSize: 9, color: "rgba(0,0,0,0.3)" }}>{signal.topValue} vs {signal.yourValue}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* SECTION 4: v2.0 Module Deep Dives */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "48px 16px" }}>
+            <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 32 }}>v2.0 Module Deep Dives</p>
+            <NavBoostPanel data={data} />
+            <SmithPanel data={data} />
+            <RaidPanel data={data} />
+          </div>
+        </section>
+
+        {/* SECTION 5: Priority Recommendations */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "48px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>Priority Recommendations</p>
+              <p className="font-mono" style={{ fontSize: 10, color: "rgba(0,0,0,0.3)" }}>{data.recommendations.length} actions identified</p>
+            </div>
+            <div>
+              {data.recommendations.map((rec, i) => (
+                <div key={i} style={{ border: "1px solid #000", padding: "20px 24px", marginTop: i > 0 ? -1 : 0 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+                    <div style={{ marginTop: 2, color: "rgba(0,0,0,0.4)" }}><ModuleIcon module={rec.module} /></div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+                        <PriorityBadge priority={rec.priority} />
+                        <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>{rec.module}</span>
+                        <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", color: "rgba(0,0,0,0.3)" }}>{rec.expectedImpact}</span>
+                      </div>
+                      <h3 style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 12 }}>{rec.action}</h3>
+                      <div style={{ borderLeft: "2px solid #000", paddingLeft: 16 }}>
+                        <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 4 }}>What to Do</p>
+                        <p style={{ fontSize: 14, color: "rgba(0,0,0,0.6)", lineHeight: 1.6 }}>{rec.fix}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* SECTION 6: Before/After Simulation */}
+        <BeforeAfterSimulation data={data} />
+
+        {/* SECTION 7: People Also Ask */}
+        <section style={{ borderBottom: "1px solid #000" }}>
+          <div className="container" style={{ padding: "48px 16px" }}>
+            <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 32 }}>People Also Ask — Content Gaps</p>
+            <div style={{ border: "1px solid #000" }}>
+              {data.peopleAlsoAsk.map((paa, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 24px", borderBottom: i < data.peopleAlsoAsk.length - 1 ? "1px solid rgba(0,0,0,0.1)" : "none" }}>
+                  {paa.answered ? <CheckCircle2 size={14} style={{ color: "rgba(0,0,0,0.3)", flexShrink: 0 }} /> : <XCircle size={14} style={{ color: "#000", flexShrink: 0 }} />}
+                  <span style={{ flex: 1, fontSize: 14, color: paa.answered ? "rgba(0,0,0,0.4)" : "#000", fontWeight: paa.answered ? 400 : 500 }}>{paa.question}</span>
+                  <span className="font-mono" style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: paa.answered ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.6)", fontWeight: paa.answered ? 400 : 500 }}>{paa.answered ? "Covered" : "Missing"}</span>
+                </div>
+              ))}
+            </div>
+            <p className="font-mono" style={{ fontSize: 10, color: "rgba(0,0,0,0.3)", marginTop: 16, lineHeight: 1.6, maxWidth: 640 }}>Answering unanswered PAA questions in your FAQ section can improve featured snippet eligibility and RAID intent alignment.</p>
+          </div>
+        </section>
+
+        {/* SECTION 8: CTA */}
+        <WaitlistCTA />
+
+        {/* Back Link */}
+        <section>
+          <div className="container" style={{ padding: "32px 16px" }}>
+            <button onClick={onBack} className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>← Analyze Another URL</button>
+          </div>
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer style={{ borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+        <div className="container" style={{ padding: "16px", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Content Grader by Autoresearch — Shadow SERP v{data.version}</span>
+          <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Report generated {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ============================================================================
+// NEW: Content Editor View (~600 lines)
+// ============================================================================
+
+// Simple markdown to HTML renderer
+function markdownToHtml(md) {
+  if (!md) return "";
+  let html = md
+    .replace(/^### (.*?)$/gm, "<h3 style='margin-top:16px;margin-bottom:8px;font-weight:700;font-size:16px;'>$1</h3>")
+    .replace(/^## (.*?)$/gm, "<h2 style='margin-top:24px;margin-bottom:12px;font-weight:700;font-size:20px;'>$1</h2>")
+    .replace(/^# (.*?)$/gm, "<h1 style='margin-top:32px;margin-bottom:16px;font-weight:700;font-size:28px;'>$1</h1>")
+    .replace(/\*\*(.*?)\*\*/g, "<strong style='font-weight:700;'>$1</strong>")
+    .replace(/\*(.*?)\*/g, "<em style='font-style:italic;'>$1</em>")
+    .replace(/^- (.*?)$/gm, "<li style='margin-left:20px;'>$1</li>")
+    .replace(/^(\d+)\. (.*?)$/gm, "<li style='margin-left:20px;'>$2</li>")
+    .replace(/\n\n/g, "</p><p>")
+    .replace(/^(.+)$/gm, "<p style='margin-bottom:12px;line-height:1.6;'>$1</p>");
+  html = "<div style='font-size:14px;color:#000;'>" + html + "</div>";
+  return html;
+}
+
+// Demo optimization data
+const DEMO_EDITOR_DATA = {
+  originalMarkdown: `# Best Sleep Positions
+
+## Introduction
+Sleep position affects spinal alignment and overall health. Finding the right sleeping position can reduce pain and improve sleep quality.
+
+## The 4 Main Sleeping Positions
+
+### Back Sleeping
+Sleeping on your back is considered the best position for spinal alignment. This position allows your spine to rest in its natural position.
+
+### Side Sleeping
+Side sleeping is excellent for reducing snoring and sleep apnea symptoms. It's also recommended during pregnancy.
+
+### Stomach Sleeping
+Stomach sleeping can strain your neck and spine. It's generally not recommended by sleep experts.
+
+### Fetal Position
+The fetal position is very popular, but it can restrict breathing and chest expansion.
+
+## Tips for Better Sleep
+- Invest in a quality mattress
+- Use supportive pillows
+- Keep your bedroom cool
+- Maintain consistent sleep schedule`,
+
+  scores: [
+    { round: 0, score: 49.36 },
+    { round: 1, score: 62.45 },
+    { round: 2, score: 75.32 },
+    { round: 3, score: 81.28 },
+  ],
+
+  rounds: [
+    {
+      round: 1,
+      optimizedMarkdown: `# The Complete Guide to Best Sleep Positions for Optimal Health
+
+## Introduction
+Sleep position affects spinal alignment, breathing patterns, and overall health quality. Finding the right sleeping position can significantly reduce pain, improve circulation, and enhance sleep quality and duration.
+
+## Why Sleep Position Matters: Understanding Spinal Health
+
+## The 4 Main Sleeping Positions: A Comprehensive Comparison
+
+### Back Sleeping: The Healthiest Position for Spine Alignment
+Sleeping on your back is widely considered the best position for spinal alignment and health. This position allows your spine to rest in its natural neutral position, distributing weight evenly.
+
+### Side Sleeping: Benefits for Breathing and Pregnancy
+Side sleeping is excellent for reducing snoring and sleep apnea symptoms. It's also recommended during pregnancy for improved blood flow.
+
+### Stomach Sleeping: Why Experts Don't Recommend It
+Stomach sleeping can strain your neck and spine, forcing your head to turn. It's generally not recommended by sleep experts due to potential alignment issues.
+
+### Fetal Position: The Popular But Potentially Restrictive Choice
+The fetal position is very popular worldwide, but it can restrict breathing and chest expansion over time.
+
+## Tips for Better Sleep and Rest Quality
+- Invest in a quality mattress that supports your preferred position
+- Use supportive, ergonomic pillows
+- Keep your bedroom cool and dark
+- Maintain consistent sleep schedule
+
+## Sleep Positions for Specific Health Conditions`,
+      changes: [
+        { type: "added", description: "Added descriptive subheadings with actionable details", targets: ["RAID", "SMITH"], impact: "strong" },
+        { type: "modified", description: "Expanded introduction with health benefits and circulation focus", targets: ["Entity Salience", "Content Effort"], impact: "strong" },
+        { type: "added", description: "New section on why sleep position matters", targets: ["SMITH Sections"], impact: "moderate" },
+        { type: "modified", description: "Enhanced position descriptions with context and benefits", targets: ["Content Effort", "Intent Alignment"], impact: "strong" },
+      ]
+    },
+    {
+      round: 2,
+      optimizedMarkdown: `# The Complete Guide to Best Sleep Positions for Optimal Health and Wellness
+
+## Introduction
+Sleep position dramatically affects spinal alignment, breathing patterns, cardiovascular health, and overall sleep quality. Choosing the right sleeping position can significantly reduce chronic pain, improve circulation, enhance respiratory function, and extend overall sleep duration and restorative benefits.
+
+## Why Sleep Position Matters: Understanding Spinal Health and Wellness
+
+Sleep experts agree that proper spinal alignment during sleep is crucial for health. Your sleep position affects:
+- Spinal curvature and alignment
+- Breathing patterns and oxygen flow
+- Circulation and blood pressure
+- Muscle tension and recovery
+
+## The 4 Main Sleeping Positions: Complete Comparison Guide
+
+### Back Sleeping: The Healthiest Position for Optimal Spine Alignment
+Sleeping on your back is widely recognized as the best position for maintaining proper spinal alignment and supporting long-term health. This neutral position allows your spine to rest naturally, distributing weight evenly across your body and reducing pressure points.
+
+**Benefits:**
+- Maintains natural spinal curve
+- Reduces pressure on joints
+- Improves breathing
+
+### Side Sleeping: Excellent Benefits for Breathing and Prenatal Health
+Side sleeping is highly recommended for reducing snoring, sleep apnea symptoms, and acid reflux. It's particularly recommended during pregnancy for improved maternal blood flow and fetal development.
+
+**Benefits:**
+- Reduces snoring
+- Improves respiratory health
+- Recommended during pregnancy
+
+### Stomach Sleeping: Why Sleep Experts Generally Don't Recommend This Position
+Stomach sleeping can strain your cervical spine, force your head to turn unnaturally, and restrict breathing. Sleep experts generally do not recommend this position due to significant potential for spinal misalignment and long-term health issues.
+
+### Fetal Position: The Popular But Potentially Restrictive Sleeping Posture
+The fetal position is the most popular sleeping position worldwide, but extended use can restrict breathing, chest expansion, and shoulder mobility over time.
+
+## Sleep Positions for Specific Health Conditions
+
+## Evidence-Based Tips for Better Sleep Quality and Rest
+- Invest in a high-quality, supportive mattress matched to your sleep position
+- Use ergonomic, supportive pillows designed for your preferred position
+- Maintain a cool (65-68F), dark sleeping environment
+- Establish and maintain a consistent sleep schedule`,
+      changes: [
+        { type: "added", description: "Added detailed 'Why Sleep Position Matters' section with bulleted benefits", targets: ["SMITH Sections", "Entity Salience"], impact: "strong" },
+        { type: "modified", description: "Expanded position descriptions with bold benefit headers", targets: ["Content Effort", "RAID Intent"], impact: "strong" },
+        { type: "added", description: "Added specific bullet benefits under each position", targets: ["Content Effort", "Engagement"], impact: "moderate" },
+        { type: "modified", description: "Enhanced tips with specific temperature and duration guidance", targets: ["Content Effort", "Snippet Match"], impact: "moderate" },
+      ]
+    },
+    {
+      round: 3,
+      optimizedMarkdown: `# The Complete Guide to Best Sleep Positions for Optimal Health, Wellness, and Pain Relief
+
+## Introduction to Sleep Position Science
+Sleep position dramatically affects spinal alignment, breathing patterns, cardiovascular health, and overall sleep quality and restorative function. Choosing the right sleeping position can significantly reduce chronic pain conditions, improve circulation and oxygen flow, enhance respiratory function, support recovery, and extend overall sleep duration while maximizing restorative benefits.
+
+## Why Sleep Position Matters: Understanding Spinal Health, Alignment, and Wellness
+
+Sleep medicine experts agree that proper spinal alignment during sleep is absolutely crucial for long-term health, pain management, and quality of life. Your sleep position affects multiple critical health factors:
+- Spinal curvature, alignment, and vertebral pressure
+- Breathing patterns, oxygen flow, and respiratory health
+- Circulation, blood pressure, and cardiovascular function
+- Muscle tension, recovery, and daily pain levels
+
+## The 4 Main Sleeping Positions: Complete Analysis and Comparison Guide
+
+### Back Sleeping: The Healthiest Position for Optimal Spine Alignment and Neutral Support
+Sleeping on your back is widely recognized by medical professionals as the best position for maintaining proper spinal alignment and supporting exceptional long-term health outcomes. This neutral sleeping position allows your spine to rest in its natural curve, distributing weight evenly across your body and minimizing pressure on joints and discs.
+
+**Key Benefits for Health and Wellness:**
+- Maintains natural spinal curvature and alignment
+- Reduces pressure on intervertebral discs and joints
+- Improves breathing and oxygen intake
+- Reduces acid reflux and digestive issues
+- Minimizes facial wrinkles from sleeping posture
+
+### Side Sleeping: Excellent Benefits for Breathing, Sleep Apnea, and Prenatal Health
+Side sleeping is highly recommended by sleep specialists for reducing snoring, preventing sleep apnea symptoms, and managing acid reflux disease. It's particularly recommended during pregnancy for improved maternal blood flow, fetal development, and reduced pressure on internal organs.
+
+**Key Benefits for Health and Wellness:**
+- Reduces snoring and sleep apnea episodes
+- Improves respiratory and breathing function
+- Recommended during pregnancy for safety
+- Reduces acid reflux and GERD symptoms
+- Better for those with back pain
+
+### Stomach Sleeping: Why Sleep Experts Generally Do Not Recommend This Position
+Stomach sleeping can strain your cervical spine, force your head into unnatural rotation, restrict breathing patterns, and limit diaphragm expansion. Sleep medicine experts generally do not recommend this position due to significant potential for spinal misalignment, nerve compression, and long-term musculoskeletal issues.
+
+### Fetal Position: The Popular But Potentially Restrictive and Posture-Limiting Position
+The fetal position is the most popular sleeping position worldwide, especially among women, but extended use can restrict breathing capacity, chest expansion, shoulder mobility, and spine extension over extended periods.
+
+## Sleep Positions for Specific Health Conditions and Pain Management
+
+### Back Pain Management
+If you experience chronic back pain, back sleeping or side sleeping are recommended positions to maintain spinal alignment.
+
+### Sleep Apnea
+Side sleeping is the most recommended position for managing sleep apnea symptoms and improving oxygen saturation.
+
+### Pregnancy
+Side sleeping, particularly left side, improves blood flow to baby and mother during pregnancy.
+
+## Evidence-Based Tips for Superior Sleep Quality, Rest, and Recovery
+- Invest in a high-quality, supportive mattress specifically designed and tested for your preferred sleep position
+- Use ergonomic, supportive pillows designed specifically for your position (back, side, or stomach sleepers)
+- Maintain a cool (65-68°F), dark, quiet sleeping environment
+- Establish and maintain a consistent sleep schedule (bedtime and wake time)
+- Avoid heavy meals and caffeine 4-6 hours before sleep
+- Consider white noise machines for improved sleep continuity`,
+      changes: [
+        { type: "added", description: "Added comprehensive health outcomes and wellness section", targets: ["Entity Salience", "Content Effort"], impact: "strong" },
+        { type: "modified", description: "Expanded conditions section with specific guidance for back pain, sleep apnea, pregnancy", targets: ["SMITH Sections", "RAID Intent"], impact: "strong" },
+        { type: "added", description: "Added expanded health benefits with 5+ specific points per position", targets: ["Content Effort", "Authority"], impact: "strong" },
+        { type: "modified", description: "Enhanced temperature specificity and added meal timing guidance", targets: ["Content Effort", "Snippet Match"], impact: "moderate" },
+      ]
+    }
+  ]
+};
+
+function ContentEditorView({ data, onBack }) {
+  const [currentRound, setCurrentRound] = useState(0);
+  const [optimizing, setOptimizing] = useState(false);
+  const [targetScore, setTargetScore] = useState(80);
+  const [signalFilter, setSignalFilter] = useState("improved");
+  const [expandedChanges, setExpandedChanges] = useState({});
+
+  const demoData = DEMO_EDITOR_DATA;
+  const scores = demoData.scores;
+  const currentScore = scores[currentRound].score;
+  const currentRoundData = currentRound > 0 ? demoData.rounds[currentRound - 1] : null;
+  const originalMarkdown = currentRound === 0 ? demoData.originalMarkdown : demoData.rounds[currentRound - 2]?.optimizedMarkdown || demoData.originalMarkdown;
+  const optimizedMarkdown = currentRoundData ? currentRoundData.optimizedMarkdown : "";
+
+  const handleStartOptimization = () => {
+    if (currentRound >= 3) return;
+    setOptimizing(true);
+    setTimeout(() => {
+      setCurrentRound(currentRound + 1);
+      setOptimizing(false);
+    }, 2000);
+  };
+
+  const handleCopyOptimized = () => {
+    if (optimizedMarkdown) {
+      navigator.clipboard.writeText(optimizedMarkdown);
+      alert("Optimized content copied to clipboard!");
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      {/* Header */}
+      <header style={{ borderBottom: "1px solid #000" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={onBack} className="font-mono" style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", background: "none", border: "none", cursor: "pointer", color: "rgba(0,0,0,0.6)" }}>← Back</button>
+            <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.3)" }}>Content Editor</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600 }}>Round: {currentRound}/3</span>
+          </div>
+        </div>
+      </header>
+
+      <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        {/* Optimization Control Bar */}
+        <section style={{ borderBottom: "1px solid #000", background: "rgba(0,0,0,0.01)", padding: "24px 16px" }}>
+          <div className="container" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 32, justifyContent: "space-between" }}>
+            {/* Score Tracker */}
+            <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+              {scores.slice(0, Math.min(currentRound + 1, scores.length)).map((s, i) => (
+                <div key={i}>
+                  <div className="font-mono" style={{ fontSize: 24, fontWeight: 700, color: i === currentRound ? "#000" : "rgba(0,0,0,0.4)" }}>{s.score.toFixed(1)}</div>
+                  {i < Math.min(currentRound, scores.length - 1) && <div style={{ fontSize: 14, color: "rgba(0,0,0,0.2)", marginTop: 4 }}>→</div>}
+                </div>
+              ))}
+            </div>
+
+            {/* Control Buttons */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button onClick={handleStartOptimization} disabled={optimizing || currentRound >= 3} className="font-mono" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", border: "1px solid #000", fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", background: optimizing || currentRound >= 3 ? "rgba(0,0,0,0.1)" : "#000", color: optimizing || currentRound >= 3 ? "rgba(0,0,0,0.4)" : "#fff", cursor: optimizing || currentRound >= 3 ? "default" : "pointer", fontWeight: 600 }}>
+                {optimizing ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Play size={12} />}
+                {currentRound === 0 ? "START AUTO-OPTIMIZE" : currentRound >= 3 ? "COMPLETE" : `START ROUND ${currentRound + 1}`}
+              </button>
+            </div>
+
+            {/* Target Score */}
+            <div>
+              <label className="font-mono" style={{ fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", display: "block", marginBottom: 4 }}>Target</label>
+              <input type="number" min="1" max="100" value={targetScore} onChange={(e) => setTargetScore(Number(e.target.value))} className="font-mono" style={{ width: 60, padding: "6px 8px", border: "1px solid #000", fontSize: 12, fontWeight: 600 }} />
+            </div>
+          </div>
+
+          {optimizing && <div className="font-mono" style={{ fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,0,0,0.6)", marginTop: 16 }}>Optimizing Round {currentRound + 1}...</div>}
+        </section>
+
+        {/* Side-by-Side Content Panels */}
+        <section style={{ flex: 1, display: "flex", borderBottom: "1px solid #000", minHeight: 0 }}>
+          {/* Left: Original */}
+          <div style={{ flex: 1, borderRight: "1px solid #000", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px", borderBottom: "1px solid #000", background: "rgba(0,0,0,0.02)" }}>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>Original</p>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+              <div style={{ fontSize: 13, color: "#000", lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: markdownToHtml(originalMarkdown) }} />
+            </div>
+          </div>
+
+          {/* Right: Optimized */}
+          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px", borderBottom: "1px solid #000", background: "rgba(0,0,0,0.02)" }}>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>Optimized {currentRound > 0 && `(Round ${currentRound})`}</p>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+              {optimizedMarkdown ? (
+                <div style={{ fontSize: 13, color: "#000", lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: markdownToHtml(optimizedMarkdown) }} />
+              ) : (
+                <p className="font-mono" style={{ fontSize: 11, color: "rgba(0,0,0,0.3)", fontStyle: "italic" }}>Run optimization to see improved content</p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Change Log & Signal Movement */}
+        {currentRoundData && (
+          <section style={{ borderBottom: "1px solid #000", maxHeight: 300, overflow: "auto" }}>
+            <div style={{ padding: "16px", borderBottom: "1px solid #000", background: "rgba(0,0,0,0.02)" }}>
+              <p className="font-mono" style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)" }}>Changes in Round {currentRound}</p>
+            </div>
+            <div style={{ padding: "20px" }}>
+              {currentRoundData.changes.map((change, i) => (
+                <div key={i} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: i < currentRoundData.changes.length - 1 ? "1px solid rgba(0,0,0,0.1)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                    <div style={{ width: 24, height: 24, borderRadius: 4, background: change.impact === "strong" ? "rgba(0,200,83,0.2)" : "rgba(255,145,0,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: change.impact === "strong" ? "#00c853" : "#ff9100" }}>
+                      {change.type === "added" ? "+" : change.type === "modified" ? "∆" : "~"}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <p className="font-mono" style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(0,0,0,0.4)", marginBottom: 2 }}>{change.type}</p>
+                      <p style={{ fontSize: 12, color: "#000" }}>{change.description}</p>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginLeft: 36 }}>
+                    {change.targets.map((t, j) => (
+                      <span key={j} className="font-mono" style={{ fontSize: 9, padding: "2px 6px", background: "rgba(0,0,0,0.08)", color: "rgba(0,0,0,0.6)", borderRadius: 2 }}>{t}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+
+      {/* Action Buttons */}
+      <footer style={{ borderTop: "1px solid #000", padding: "16px", background: "rgba(0,0,0,0.01)" }}>
+        <div className="container" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          {optimizedMarkdown && (
+            <button onClick={handleCopyOptimized} className="font-mono" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", border: "1px solid #000", fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", background: "#fff", cursor: "pointer", fontWeight: 600 }}>
+              <Copy size={12} /> Copy Optimized
+            </button>
+          )}
+          <button onClick={onBack} className="font-mono" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", border: "1px solid #000", fontSize: 10, letterSpacing: "0.15em", textTransform: "uppercase", background: "rgba(0,0,0,0.05)", cursor: "pointer" }}>
+              <ArrowLeft size={12} /> Back to Report
+          </button>
+        </div>
+      </footer>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN APP (modified with editor state)
+// ============================================================================
+
+const API_BASE_URL = "https://content-grader-api.vercel.app";
+
+function ContentGrader() {
+  const [view, setView] = useState("home");
+  const [analyzedUrl, setAnalyzedUrl] = useState("");
+  const [analyzedKeyword, setAnalyzedKeyword] = useState("");
+  const [analysisData, setAnalysisData] = useState(null);
+  const [analysisError, setAnalysisError] = useState(null);
+  const [apiReady, setApiReady] = useState(false);
+
+  const handleAnalyze = (url, keyword) => {
+    setAnalyzedUrl(url);
+    setAnalyzedKeyword(keyword);
+    setAnalysisData(null);
+    setAnalysisError(null);
+    setApiReady(false);
+    setView("loading");
+
+    // Start real API call
+    fetch(`${API_BASE_URL}/api/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, keyword }),
+    })
+      .then(resp => {
+        if (!resp.ok) return resp.json().then(e => { throw new Error(e.error || "Analysis failed"); });
+        return resp.json();
+      })
+      .then(data => {
+        setAnalysisData(data);
+        setApiReady(true);
+      })
+      .catch(err => {
+        console.error("API error:", err);
+        setAnalysisError(err.message);
+        setApiReady(true);
+      });
+  };
+
+  const handleLoadingComplete = () => {
+    if (apiReady) {
+      setView("emailgate");
+    }
+  };
+
+  useEffect(() => {
+    if (apiReady && view === "loading") {
+      // The LoadingView will call onComplete when its animation finishes
+    }
+  }, [apiReady, view]);
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Space Grotesk', system-ui, sans-serif; background: #fff; color: #000; -webkit-font-smoothing: antialiased; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .container { width: 100%; margin-left: auto; margin-right: auto; padding-left: 1rem; padding-right: 1rem; }
+        @media (min-width: 640px) { .container { padding-left: 1.5rem; padding-right: 1.5rem; } }
+        @media (min-width: 1024px) { .container { padding-left: 2rem; padding-right: 2rem; max-width: 1280px; } }
+        input::placeholder { color: rgba(0,0,0,0.25); }
+        button { font-family: inherit; }
+        .hidden-mobile { display: none; }
+        .mobile-only { display: block; }
+        @media (min-width: 1024px) { .hidden-mobile { display: flex; } .mobile-only { display: none; } }
+      `}</style>
+
+      {view === "home" && <HomeView onAnalyze={handleAnalyze} />}
+      {view === "loading" && <LoadingView url={analyzedUrl} apiReady={apiReady} apiError={analysisError} onComplete={() => setView("emailgate")} />}
+      {view === "emailgate" && <EmailGateView url={analyzedUrl} onSubmit={() => setView("report")} />}
+      {view === "report" && <ReportView data={analysisData || DEMO_DATA} onBack={() => { setView("home"); setAnalysisData(null); }} onOpenEditor={() => setView("editor")} />}
+      {view === "editor" && <ContentEditorView data={analysisData || DEMO_DATA} onBack={() => setView("report")} />}
+    </>
+  );
+}
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(ContentGrader));
+  </script>
+</body>
+</html>
